@@ -411,7 +411,7 @@ function ConsultasScreen({price}){
 // ── NAV ──────────────────────────────────────────────────────────────────
 function Nav({screen,setScreen}){
   const tabs=[{id:'dashboard',icon:'⌂',l:'Inicio'},{id:'venta',icon:'🍾',l:'Venta'},{id:'caja',icon:'⇄',l:'Caja'},{id:'stock',icon:'📦',l:'Stock'},{id:'consultas',icon:'✦',l:'Asistente'}];
-  return(<div style={{position:'fixed',bottom:0,left:0,right:0,background:C.barrel,borderTop:`1px solid ${C.border}`,display:'flex',zIndex:200}}>{tabs.map(t=><button key={t.id} onClick={()=>setScreen(t.id)} style={{flex:1,padding:'10px 2px 12px',background:'none',border:'none',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:2}}><span style={{fontSize:t.id==='dashboard'?20:17,opacity:screen===t.id?1:0.35}}>{t.icon}</span><span style={{fontSize:9,fontFamily:'system-ui',color:screen===t.id?C.gold:C.dim,fontWeight:screen===t.id?700:400}}>{t.l}</span></button>)}</div>);
+  return(<div style={{position:'fixed',bottom:0,left:0,right:0,background:C.barrel,borderTop:`1px solid ${C.border}`,display:'flex',zIndex:200,paddingBottom:'env(safe-area-inset-bottom, 0px)'}}>{tabs.map(t=><button key={t.id} onClick={()=>setScreen(t.id)} style={{flex:1,padding:'10px 2px 12px',background:'none',border:'none',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:2}}><span style={{fontSize:t.id==='dashboard'?20:17,opacity:screen===t.id?1:0.35}}>{t.icon}</span><span style={{fontSize:9,fontFamily:'system-ui',color:screen===t.id?C.gold:C.dim,fontWeight:screen===t.id?700:400}}>{t.l}</span></button>)}</div>);
 }
 
 // ── APP ───────────────────────────────────────────────────────────────────
@@ -425,7 +425,7 @@ export default function NovatoApp(){
     <div style={{fontFamily:'Georgia, serif',background:C.cellar,minHeight:'100vh',color:C.text}}>
       {toast&&<div style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',zIndex:999,whiteSpace:'nowrap',background:toast.type==='ok'?C.greenBg:C.wineBg,border:`1px solid ${toast.type==='ok'?C.green:C.wine}`,color:toast.type==='ok'?'#7dce9b':'#f08080',padding:'11px 22px',borderRadius:10,fontSize:13,fontFamily:'system-ui',boxShadow:'0 4px 20px rgba(0,0,0,0.5)'}}>{toast.msg}</div>}
       {settings&&<SettingsPanel user={user} onClose={()=>setSettings(false)} onLogout={logout} showToast={showToast}/>}
-      <div style={{background:C.barrel,borderBottom:`1px solid ${C.border}`,padding:'13px 18px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
+      <div style={{background:C.barrel,borderBottom:`1px solid ${C.border}`,padding:'env(safe-area-inset-top, 13px) 18px 13px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
         <div style={{display:'flex',alignItems:'center',gap:10}}><span style={{color:C.gold,fontWeight:700,letterSpacing:'0.25em',fontSize:15,fontFamily:'Georgia, serif'}}>NOVATO</span><span style={{color:C.border}}>|</span><span style={{color:C.dim,fontSize:12,fontFamily:'system-ui'}}>Gestión</span></div>
         <button onClick={()=>setSettings(true)} style={{display:'flex',alignItems:'center',gap:7,background:C.cork,border:`1px solid ${C.border}`,borderRadius:20,padding:'6px 13px',color:C.muted,fontSize:12,fontFamily:'system-ui',cursor:'pointer'}}><span>{user.emoji}</span><span>{user.nombre}</span><span style={{color:C.dim,fontSize:10}}>⚙</span></button>
       </div>
