@@ -268,10 +268,44 @@ function DashboardScreen({onNavigate,price,source,ops}){
         </div>
         <div style={{display:'flex',gap:8}}>{PRODUCTOS.map(p=><div key={p.id} style={{flex:1,textAlign:'center'}}><div style={{fontSize:8,color:p.stock>0?C.muted:C.dim,fontFamily:'system-ui',lineHeight:1.3}}>{p.label.split(' ').map((w,i)=><span key={i}>{w}<br/></span>)}</div></div>)}</div>
       </Card>
-      <button onClick={()=>onNavigate('stock')} style={{width:'100%',background:daysSince===null||daysSince>30?C.wineBg:C.barrel,border:`1px solid ${daysSince===null||daysSince>30?C.wine+'55':C.border}`,borderRadius:12,padding:'13px 16px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:18}}>
-        <div style={{textAlign:'left'}}><div style={{color:daysSince===null||daysSince>30?'#E07080':C.text,fontSize:13,fontWeight:700,fontFamily:'system-ui',marginBottom:2}}>{daysSince===null?'⚠ Control de stock pendiente':daysSince>30?`⚠ Último control hace ${daysSince} días`:`✓ Control de stock · hace ${daysSince} día${daysSince===1?'':'s'}`}</div><div style={{color:daysSince===null||daysSince>30?'#A06070':C.dim,fontSize:12,fontFamily:'system-ui'}}>{last?`${last.fecha} a las ${last.hora}`:'Nunca realizado — tocá para hacer el primer control'}</div></div>
-        <span style={{color:C.gold,fontSize:18}}>›</span>
-      </button>
+      {/* Card control de stock */}
+      <div style={{background:daysSince===null||daysSince>30?C.wineBg:C.barrel,border:`1px solid ${daysSince===null||daysSince>30?C.wine+'44':C.border}`,borderRadius:14,padding:'14px 16px',marginBottom:18}}>
+        {/* Header */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom: last?.items?.filter(d=>d.diff!==0).length>0?12:0}}>
+          <div>
+            <div style={{color:daysSince===null||daysSince>30?'#E07080':C.text,fontSize:13,fontWeight:700,fontFamily:'system-ui',marginBottom:2}}>
+              {daysSince===null?'⚠ Control de stock pendiente':daysSince>30?`⚠ Último control hace ${daysSince} días`:`✓ Control de stock · hace ${daysSince} día${daysSince===1?'':'s'}`}
+            </div>
+            <div style={{color:daysSince===null||daysSince>30?'#A06070':C.dim,fontSize:12,fontFamily:'system-ui'}}>
+              {last?`${last.fecha} a las ${last.hora}`:'Nunca realizado'}
+            </div>
+          </div>
+          <button onClick={()=>onNavigate('stock')} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:8,padding:'7px 12px',color:C.gold,fontSize:12,fontFamily:'system-ui',fontWeight:700,cursor:'pointer',flexShrink:0}}>
+            + Nuevo
+          </button>
+        </div>
+        {/* Diferencias del último control */}
+        {last?.items?.filter(d=>d.diff!==0).length>0&&(
+          <div style={{borderTop:`1px solid ${C.border}`,paddingTop:10,display:'flex',flexDirection:'column',gap:6}}>
+            <div style={{fontSize:10,color:'#E07080',letterSpacing:'0.1em',textTransform:'uppercase',fontFamily:'system-ui',marginBottom:2}}>Diferencias pendientes de resolver</div>
+            {last.items.filter(d=>d.diff!==0).map(d=>(
+              <div key={d.id} style={{display:'flex',alignItems:'center',gap:10}}>
+                <div style={{width:3,height:28,background:d.hex||C.wine,borderRadius:2,flexShrink:0}}/>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,color:C.text,fontFamily:'system-ui',fontWeight:600}}>{d.label}</div>
+                  <div style={{fontSize:11,color:C.dim,fontFamily:'system-ui'}}>Teórico: {d.stock} bot · Real: {d.real} bot</div>
+                </div>
+                <div style={{fontWeight:700,fontSize:15,fontFamily:'system-ui',color:d.diff<0?'#f08080':'#7dce9b',flexShrink:0}}>
+                  {d.diff>0?'+':''}{d.diff} bot
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {last&&last.items?.filter(d=>d.diff!==0).length===0&&(
+          <div style={{borderTop:`1px solid ${C.border}`,paddingTop:8,fontSize:12,color:C.green,fontFamily:'system-ui'}}>✓ Stock coincide con lo teórico</div>
+        )}
+      </div>
       <SL>Últimas operaciones</SL>
       <div style={{display:'flex',flexDirection:'column',gap:8}}>
         {ops.slice(0,4).map((op,i)=>(
