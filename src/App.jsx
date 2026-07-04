@@ -388,7 +388,20 @@ function ConsultasScreen({price}){
   const send=async(text)=>{
     const q=(text||input).trim();if(!q||loading)return;setInput('');
     const next=[...msgs,{role:'user',content:q}];setMsgs(next);setL(true);
-    try{const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,system:buildCtx(tc,price),messages:next.slice(1)})});const d=await res.json();setMsgs(p=>[...p,{role:'assistant',content:d?.content?.[0]?.text||'Sin respuesta.'}]);}
+    try{
+      const res=await fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+        body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1000,system:buildCtx(tc,price),messages:next.slice(1)})
+      });
+      const d=await res.json();
+      if(d?.content?.[0]?.text){
+        setMsgs(p=>[...p,{role:'assistant',content:d.content[0].text}]);
+      } else {
+        const errMsg=d?.error?.message||d?.message||JSON.stringify(d);
+        setMsgs(p=>[...p,{role:'assistant',content:'Error: '+errMsg}]);
+      }
+    }
     catch{setMsgs(p=>[...p,{role:'assistant',content:'Error de conexión.'}]);}
     setL(false);
   };
