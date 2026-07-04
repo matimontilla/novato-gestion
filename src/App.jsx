@@ -2,7 +2,8 @@ import { useState, useRef, useEffect } from "react";
 
 // ── CONFIG ───────────────────────────────────────────────────────────────
 // Vercel: agregar variable de entorno VITE_GAS_URL con la URL del deployment
-const GAS_URL = import.meta.env.VITE_GAS_URL || '';
+const GAS_URL       = import.meta.env.VITE_GAS_URL       || '';
+const ANTHROPIC_KEY = import.meta.env.VITE_ANTHROPIC_KEY || '';
 
 // ── TOKENS ───────────────────────────────────────────────────────────────
 const C = {
@@ -65,7 +66,7 @@ function useAppData() {
     if (!GAS_URL) {
       // Sin GAS: usar storage local
       setPrice(8000); setSource('local');
-      try { const r=await window.storage.get('ops'); if(r) setOps(JSON.parse(r.value)); } catch {}
+      try { const r=localStorage.getItem('ops'); if(r) setOps(JSON.parse(r)); } catch {}
       return;
     }
     try {
@@ -83,7 +84,7 @@ function useAppData() {
   const addOp = async (op) => {
     const next = [op, ...ops].slice(0, 20);
     setOps(next);
-    try { await window.storage.set('ops', JSON.stringify(next)); } catch {}
+    try { localStorage.setItem('ops', JSON.stringify(next)); } catch {}
   };
 
   return { price, source, ops, addOp, refresh };
@@ -91,13 +92,13 @@ function useAppData() {
 
 function useStockControl() {
   const [last,setLast]=useState(null);
-  useEffect(()=>{ (async()=>{try{const r=await window.storage.get('stock_ctrl');if(r)setLast(JSON.parse(r.value));}catch{}})(); },[]);
-  const save=async(ctrl)=>{ setLast(ctrl); try{await window.storage.set('stock_ctrl',JSON.stringify(ctrl));}catch{}; };
+  useEffect(()=>{ try{const r=localStorage.getItem('stock_ctrl');if(r)setLast(JSON.parse(r));}catch{} },[]);
+  const save=async(ctrl)=>{ setLast(ctrl); try{localStorage.setItem('stock_ctrl',JSON.stringify(ctrl));}catch{}; };
   return {last,save};
 }
 
-async function getPin(uid){try{const r=await window.storage.get(`pin_${uid}`);return r?.value||'1234';}catch{return'1234';}}
-async function savePin(uid,pin){try{await window.storage.set(`pin_${uid}`,pin);return true;}catch{return false;}}
+async function getPin(uid){try{return localStorage.getItem(`pin_${uid}`)||'1234';}catch{return'1234';}}
+async function savePin(uid,pin){try{localStorage.setItem(`pin_${uid}`,pin);return true;}catch{return false;}}
 
 // ── CONTEXTO IA ──────────────────────────────────────────────────────────
 function buildCtx(tc, price) {
@@ -387,7 +388,7 @@ function ConsultasScreen({price}){
   const send=async(text)=>{
     const q=(text||input).trim();if(!q||loading)return;setInput('');
     const next=[...msgs,{role:'user',content:q}];setMsgs(next);setL(true);
-    try{const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,system:buildCtx(tc,price),messages:next.slice(1)})});const d=await res.json();setMsgs(p=>[...p,{role:'assistant',content:d?.content?.[0]?.text||'Sin respuesta.'}]);}
+    try{const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,system:buildCtx(tc,price),messages:next.slice(1)})});const d=await res.json();setMsgs(p=>[...p,{role:'assistant',content:d?.content?.[0]?.text||'Sin respuesta.'}]);}
     catch{setMsgs(p=>[...p,{role:'assistant',content:'Error de conexión.'}]);}
     setL(false);
   };
