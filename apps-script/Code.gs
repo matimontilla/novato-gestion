@@ -90,7 +90,7 @@ function getResumenCajas() {
   if (!caja) return [];
   var lastRow = caja.getLastRow();
   if (lastRow < 1) return [];
-  var data = caja.getRange(1, 2, lastRow, 4).getValues(); // B..E: caja, AR$, USD, CRYPTO
+  var data = caja.getRange(1, 2, lastRow, 3).getValues(); // B..D: caja, AR$, USD
 
   var inicio = -1;
   for (var i = 0; i < data.length; i++) {
@@ -103,12 +103,11 @@ function getResumenCajas() {
     var nombre = data[j][0];
     if (!nombre) continue;
     if (nombre === 'TOTAL:') break;
-    if (nombre === 'AR$' || nombre === 'USD' || nombre === 'CRYPTO') continue; // fila de sub-encabezados
+    if (nombre === 'AR$' || nombre === 'USD') continue; // fila de sub-encabezados
     resultado.push({
-      caja:   nombre,
-      ars:    Number(data[j][1]) || 0,
-      usd:    Number(data[j][2]) || 0,
-      crypto: Number(data[j][3]) || 0
+      caja: nombre,
+      ars:  Number(data[j][1]) || 0,
+      usd:  Number(data[j][2]) || 0
     });
   }
   return resultado;

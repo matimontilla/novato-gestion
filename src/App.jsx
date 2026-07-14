@@ -606,22 +606,20 @@ function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,refresh,resume
       {resumenCajas?.length>0&&(
         <Card style={{marginBottom:20}}>
           <SL>Estado de cajas</SL>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 64px 64px 64px',gap:6,padding:'0 2px 6px'}}>
-            {['Caja','AR$','USD','CRYPTO'].map((h,i)=><div key={h} style={{fontSize:9,color:C.dim,letterSpacing:'0.08em',textTransform:'uppercase',fontFamily:'system-ui',textAlign:i===0?'left':'center'}}>{h}</div>)}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 76px 76px',gap:6,padding:'0 2px 6px'}}>
+            {['Caja','AR$','USD'].map((h,i)=><div key={h} style={{fontSize:9,color:C.dim,letterSpacing:'0.08em',textTransform:'uppercase',fontFamily:'system-ui',textAlign:i===0?'left':'center'}}>{h}</div>)}
           </div>
           {resumenCajas.map(c=>(
-            <div key={c.caja} style={{display:'grid',gridTemplateColumns:'1fr 64px 64px 64px',gap:6,padding:'7px 2px',borderTop:`1px solid ${C.border}`,alignItems:'center'}}>
+            <div key={c.caja} style={{display:'grid',gridTemplateColumns:'1fr 76px 76px',gap:6,padding:'7px 2px',borderTop:`1px solid ${C.border}`,alignItems:'center'}}>
               <span style={{color:C.text,fontSize:13,fontFamily:'system-ui',fontWeight:600}}>{c.caja}</span>
               <span style={{textAlign:'center',color:C.muted,fontSize:12,fontFamily:'system-ui'}}>{c.ars?`$${Math.round(c.ars).toLocaleString('es-AR')}`:'—'}</span>
               <span style={{textAlign:'center',color:C.muted,fontSize:12,fontFamily:'system-ui'}}>{c.usd?`$${Math.round(c.usd).toLocaleString('es-AR')}`:'—'}</span>
-              <span style={{textAlign:'center',color:C.muted,fontSize:12,fontFamily:'system-ui'}}>{c.crypto?c.crypto.toLocaleString('es-AR'):'—'}</span>
             </div>
           ))}
-          <div style={{display:'grid',gridTemplateColumns:'1fr 64px 64px 64px',gap:6,padding:'8px 2px 0',borderTop:`2px solid ${C.border}`,marginTop:2}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 76px 76px',gap:6,padding:'8px 2px 0',borderTop:`2px solid ${C.border}`,marginTop:2}}>
             <span style={{color:C.gold,fontSize:13,fontFamily:'system-ui',fontWeight:700}}>TOTAL</span>
             <span style={{textAlign:'center',color:C.gold,fontSize:12,fontFamily:'system-ui',fontWeight:700}}>${Math.round(resumenCajas.reduce((s,c)=>s+c.ars,0)).toLocaleString('es-AR')}</span>
             <span style={{textAlign:'center',color:C.gold,fontSize:12,fontFamily:'system-ui',fontWeight:700}}>${Math.round(resumenCajas.reduce((s,c)=>s+c.usd,0)).toLocaleString('es-AR')}</span>
-            <span style={{textAlign:'center',color:C.gold,fontSize:12,fontFamily:'system-ui',fontWeight:700}}>{resumenCajas.reduce((s,c)=>s+c.crypto,0).toLocaleString('es-AR')}</span>
           </div>
         </Card>
       )}
