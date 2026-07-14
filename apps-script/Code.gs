@@ -166,12 +166,30 @@ function nextReferencia(prefix) {
   return prefix + '-' + ('00' + (max + 1)).slice(-3);
 }
 
+// Escribe (o reescribe) las columnas calculadas de una fila de BALANCE: AÑADA, MONTO
+// US$ FF/FP, CU $/US$, CONCEPTO, SALDO $/US$, % DIF POR TC y AÑO. Se usa tanto para
+// filas nuevas (addSale) como para reparar filas rotas (repararBalance). IMPORTANTE:
+// este Sheet usa configuración regional en español → los argumentos de función van
+// separados por PUNTO Y COMA (;), no coma. Escribir con comas produce #ERROR!.
+function escribirFormulasBalance(row) {
+  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  balance.getRange(row, 6).setValue('=RIGHT(E' + row + ';4)');                                                    // F AÑADA
+  balance.getRange(row, 8).setValue('=G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1)'); // H MONTO US$ FF
+  balance.getRange(row, 9).setValue('=H' + row + '+P' + row);                                                     // I MONTO US$ FP
+  balance.getRange(row, 10).setValue('=G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)');              // J CU $
+  balance.getRange(row, 11).setValue('=H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)');              // K CU US$
+  balance.getRange(row, 14).setValue('=IF(G' + row + '>0;"Ingreso";(IF(G' + row + '=0;"Movimiento";"Egreso")))'); // N CONCEPTO
+  balance.getRange(row, 15).setValue('=G' + row + '-SUMIF(CAJA!$I$3:$I$' + CAJA_RANGO_FIN + ';L' + row + ';CAJA!$F$3:$F$' + CAJA_RANGO_FIN + ')'); // O SALDO $
+  balance.getRange(row, 16).setValue('=-(H' + row + '-SUMIF(CAJA!$I$3:$I$' + CAJA_RANGO_FIN + ';L' + row + ';CAJA!$G$3:$G$' + CAJA_RANGO_FIN + '))'); // P SALDO US$
+  balance.getRange(row, 17).setValue('=IF(N' + row + '="Egreso";-P' + row + '/H' + row + ';P' + row + '/H' + row + ')');   // Q % DIF POR TC
+  balance.getRange(row, 18).setValue('=IF(BALANCE!$B' + row + '="";"";YEAR(BALANCE!$B' + row + '))');             // R AÑO
+}
+
 // Registra la venta en BALANCE (con las mismas fórmulas que usa cualquier fila
 // cargada a mano) y descuenta el depósito de origen en STOCK. NO toca CAJA:
 // eso sólo pasa cuando se registre el cobro correspondiente.
 function addSale(p) {
-  var ss      = SpreadsheetApp.getActiveSpreadsheet();
-  var balance = ss.getSheetByName('BALANCE');
+  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   if (!balance) throw new Error('No se encontró la pestaña BALANCE');
 
   var productoSheet  = PRODUCTO_APP_TO_SHEET[p.producto] || p.producto;
@@ -185,27 +203,18 @@ function addSale(p) {
   var referencia = nextReferencia(prefijoCliente(cliente));
   var row        = balance.getLastRow() + 1;
 
-  balance.getRange(row, 2, 1, 13).setValues([[
-    parseFechaApp(p.fecha),                                                       // B FECHA
-    'Venta',                                                                      // C DETALLE
-    cliente,                                                                      // D SUBDETALLE
-    productoSheet,                                                                // E PRODUCTO
-    '=RIGHT(E' + row + ',4)',                                                     // F AÑADA
-    montoArs,                                                                     // G MONTO $
-    '=G' + row + '/XLOOKUP(B' + row + ',BLUE_API!$A$2:$A$4590,BLUE_API!$C$2:$C$4590,,-1)', // H MONTO US$ FF
-    '=H' + row + '+P' + row,                                                      // I MONTO US$ FP
-    '=G' + row + '/VLOOKUP(E' + row + ',STOCK!$B$3:$G$9,3,FALSE)',                // J CU $
-    '=H' + row + '/VLOOKUP(E' + row + ',STOCK!$B$3:$G$9,3,FALSE)',                // K CU US$
-    referencia,                                                                   // L REFERENCIA
-    parseInt(p.botellas) || 0,                                                    // M BOTELLAS
-    '=IF(G' + row + '>0,"Ingreso",(IF(G' + row + '=0,"Movimiento","Egreso")))'    // N CONCEPTO
-  ]]);
-  balance.getRange(row, 15, 1, 3).setValues([[
-    '=G' + row + '-SUMIF(CAJA!$I$3:$I$' + CAJA_RANGO_FIN + ',L' + row + ',CAJA!$F$3:$F$' + CAJA_RANGO_FIN + ')',
-    '=-(H' + row + '-SUMIF(CAJA!$I$3:$I$' + CAJA_RANGO_FIN + ',L' + row + ',CAJA!$G$3:$G$' + CAJA_RANGO_FIN + '))',
-    '=IF(N' + row + '="Egreso",-P' + row + '/H' + row + ',P' + row + '/H' + row + ')'
-  ]]);
-  balance.getRange(row, 1).setValue(p.user || ''); // A: quién lo cargó (columna sin uso hasta ahora)
+  // Datos que vienen del usuario
+  balance.getRange(row, 2).setValue(parseFechaApp(p.fecha));    // B FECHA
+  balance.getRange(row, 3).setValue('Venta');                   // C DETALLE
+  balance.getRange(row, 4).setValue(cliente);                   // D SUBDETALLE
+  balance.getRange(row, 5).setValue(productoSheet);              // E PRODUCTO
+  balance.getRange(row, 7).setValue(montoArs);                   // G MONTO $
+  balance.getRange(row, 12).setValue(referencia);                // L REFERENCIA
+  balance.getRange(row, 13).setValue(parseInt(p.botellas) || 0); // M BOTELLAS
+  balance.getRange(row, 1).setValue(p.user || '');               // A: quién lo cargó (columna sin uso hasta ahora)
+
+  // Columnas calculadas — mismas fórmulas que cualquier fila cargada a mano
+  escribirFormulasBalance(row);
 
   // Descuenta del depósito de origen (por defecto R Peña si no se especificó)
   ajustarStockUbicacion(p.producto, p.deposito || 'R Peña', null, parseInt(p.botellas) || 0);
@@ -401,22 +410,71 @@ function getRecentOps(n) {
 function ampliarRangosReconciliacion() {
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   var lastRow = balance.getLastRow();
-  if (lastRow < 3) { Logger.log('BALANCE está vacío, nada para ampliar.'); return; }
-  var range     = balance.getRange(3, 15, lastRow - 2, 2); // O:P
-  var formulas  = range.getFormulas();
-  var patronFin = /\$511\b/g;
-  var cambios   = 0;
-  for (var i = 0; i < formulas.length; i++) {
-    for (var j = 0; j < formulas[i].length; j++) {
-      if (formulas[i][j] && patronFin.test(formulas[i][j])) {
-        formulas[i][j] = formulas[i][j].replace(patronFin, '$' + CAJA_RANGO_FIN);
-        cambios++;
+  var cambiosBalance = 0;
+  if (lastRow >= 3) {
+    var range     = balance.getRange(3, 15, lastRow - 2, 2); // O:P
+    var formulas  = range.getFormulas();
+    var patronFin = /\$511\b/g;
+    for (var i = 0; i < formulas.length; i++) {
+      for (var j = 0; j < formulas[i].length; j++) {
+        if (formulas[i][j] && patronFin.test(formulas[i][j])) {
+          formulas[i][j] = formulas[i][j].replace(patronFin, '$' + CAJA_RANGO_FIN);
+          cambiosBalance++;
+        }
+        patronFin.lastIndex = 0;
       }
-      patronFin.lastIndex = 0;
+    }
+    range.setFormulas(formulas);
+  }
+
+  // La tabla agregada de STOCK suma BOTELLAS de BALANCE con un rango también fijo
+  // (históricamente hasta la fila 369) — sin esto, ventas cargadas después de esa
+  // fila no se reflejan en el STOCK agregado (aunque sí en el detalle por depósito).
+  var stock = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('STOCK');
+  var cambiosStock = 0;
+  if (stock) {
+    var rangeStock    = stock.getRange(4, 6, 6, 1); // F4:F9 = EGRESOS
+    var formulasStock = rangeStock.getFormulas();
+    var patronStock   = /\$369\b/g;
+    for (var k = 0; k < formulasStock.length; k++) {
+      if (formulasStock[k][0] && patronStock.test(formulasStock[k][0])) {
+        formulasStock[k][0] = formulasStock[k][0].replace(patronStock, '$' + CAJA_RANGO_FIN);
+        cambiosStock++;
+      }
+      patronStock.lastIndex = 0;
+    }
+    rangeStock.setFormulas(formulasStock);
+  }
+
+  Logger.log('Listo — ' + cambiosBalance + ' fórmulas de BALANCE y ' + cambiosStock + ' de STOCK ampliadas a fila ' + CAJA_RANGO_FIN + '.');
+}
+
+// ── REPARAR FILAS DE BALANCE ──────────────────────────────────────────
+// Corre esto UNA VEZ después de actualizar el script si alguna venta quedó con
+// #ERROR! en sus columnas calculadas (pasó por escribir fórmulas con coma en un
+// Sheet configurado en español). Recorre BALANCE y:
+//  1) Completa la columna AÑO donde falte (arrastre viejo se cortó en la fila 369).
+//  2) Reescribe TODAS las fórmulas calculadas en cualquier fila que muestre un error.
+// No toca filas que ya están bien.
+function repararBalance() {
+  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  var lastRow = balance.getLastRow();
+  if (lastRow < 3) { Logger.log('BALANCE está vacío, nada para reparar.'); return; }
+
+  var reparadas = 0, aniosCompletados = 0;
+  for (var row = 3; row <= lastRow; row++) {
+    var valorF = balance.getRange(row, 6).getValue();  // F AÑADA
+    var valorR = balance.getRange(row, 18).getValue(); // R AÑO
+    var esError = typeof valorF === 'string' && valorF.indexOf('#') === 0;
+    if (esError) {
+      escribirFormulasBalance(row);
+      reparadas++;
+    } else if (valorR === '' || valorR === null) {
+      balance.getRange(row, 18).setValue('=IF(BALANCE!$B' + row + '="";"";YEAR(BALANCE!$B' + row + '))');
+      aniosCompletados++;
     }
   }
-  range.setFormulas(formulas);
-  Logger.log('Listo — ' + cambios + ' fórmulas ampliadas a fila ' + CAJA_RANGO_FIN + '.');
+  Logger.log('Listo — ' + reparadas + ' fila(s) con fórmulas rotas reparadas, ' + aniosCompletados + ' con AÑO completado.');
 }
 
 // ── HELPERS ──────────────────────────────────────────────────────────
