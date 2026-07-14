@@ -422,8 +422,6 @@ function addMovement(p) {
 
   var signo   = p.tipo === 'gasto' ? -1 : 1;
   var monto   = (parseFloat(p.monto) || 0) * signo;
-  var rate    = getDolarRate(p.fecha);
-  var montoUS = rate ? Math.round((monto / rate) * 100) / 100 : '';
   var cajaLbl = CAJA_LABELS[p.caja] || p.caja;
 
   var ultimaReal = obtenerUltimaFilaConFecha(caja, 2); // B = FECHA
@@ -436,7 +434,7 @@ function addMovement(p) {
     p.contacto || '',                                       // D SUBDETALLE
     '',                                                     // E PRODUCTO
     monto,                                                  // F MONTO $
-    montoUS,                                                // G MONTO US$
+    '=F' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1)', // G MONTO US$ (misma fórmula que el resto de la columna)
     cajaLbl,                                                // H CAJA
     p.referencia || ''                                      // I REFERENCIA (opcional → BALANCE)
   ]]);
