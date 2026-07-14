@@ -136,6 +136,7 @@ function useAppData() {
   const [stockUbicacion, setStockUbicacion] = useState(null); // { 'Malbec 2021': {'R Peña':0,...}, ... } | null
   const [ventasPendientes, setVentasPendientes] = useState([]); // [{referencia,cliente,producto,saldoArs,saldoUsd}]
   const [clientes, setClientes] = useState([]); // [{nombre,canal,activo}] — real, desde la pestaña CLIENTES
+  const [ultimoControlStock, setUltimoControlStock] = useState(null); // {fecha,hora,items:[...]} — real, compartido entre dispositivos
 
   const refresh = async () => {
     if (!GAS_URL) {
@@ -153,6 +154,7 @@ function useAppData() {
         if (d.stockUbicacion) setStockUbicacion(d.stockUbicacion);
         if (d.ventasPendientes) setVentasPendientes(d.ventasPendientes);
         if (d.clientes?.length) setClientes(d.clientes);
+        if (d.ultimoControlStock) setUltimoControlStock(d.ultimoControlStock);
       }
     } catch { setPrice(8000); setSource('fallback'); }
   };
@@ -165,12 +167,15 @@ function useAppData() {
     try { localStorage.setItem('ops', JSON.stringify(next)); } catch {}
   };
 
-  return { price, source, ops, addOp, refresh, stockUbicacion, ventasPendientes, clientes };
+  return { price, source, ops, addOp, refresh, stockUbicacion, ventasPendientes, clientes, ultimoControlStock };
 }
 
-function useStockControl() {
+function useStockControl(backendControl) {
   const [last,setLast]=useState(null);
-  useEffect(()=>{ try{const r=localStorage.getItem('stock_ctrl');if(r)setLast(JSON.parse(r));}catch{} },[]);
+  useEffect(()=>{
+    if (backendControl) { setLast(backendControl); return; }
+    try{const r=localStorage.getItem('stock_ctrl');if(r)setLast(JSON.parse(r));}catch{}
+  },[backendControl]);
   const save=async(ctrl)=>{ setLast(ctrl); try{localStorage.setItem('stock_ctrl',JSON.stringify(ctrl));}catch{}; };
   return {last,save};
 }
@@ -266,7 +271,7 @@ function SettingsPanel({user,onClose,onLogout,showToast}){
 }
 
 // ── STOCK (control físico + transferencias entre depósitos) ────────────────
-function StockScreen({onBack,showToast,onSaved,productos,applyTransfer,user,refresh}){
+function StockScreen({onBack,showToast,productos,applyTransfer,user,refresh,last,save}){
   const [view,setView]=useState('control'); // 'control' | 'transfer'
   return(
     <div style={{padding:'20px 16px',maxWidth:500,margin:'0 auto'}}>
@@ -280,24 +285,33 @@ function StockScreen({onBack,showToast,onSaved,productos,applyTransfer,user,refr
         ))}
       </div>
       {view==='control'
-        ? <StockControlBody productos={productos} showToast={showToast} onSaved={onSaved} onBack={onBack}/>
+        ? <StockControlBody productos={productos} showToast={showToast} onBack={onBack} last={last} save={save} user={user} refresh={refresh}/>
         : <TransferForm productos={productos} applyTransfer={applyTransfer} user={user} showToast={showToast} onBack={onBack} refresh={refresh}/>}
     </div>
   );
 }
 
-function StockControlBody({productos,showToast,onSaved,onBack}){
-  const {last,save}=useStockControl();
+function StockControlBody({productos,showToast,onBack,last,save,user,refresh}){
   const [real,setReal]=useState(Object.fromEntries(productos.map(p=>[p.id,''])));
   const set=(id,v)=>setReal(p=>({...p,[id]:v.replace(/\D/g,'')}));
   const diffs=productos.map(p=>{const r=real[p.id]===''?null:parseInt(real[p.id]);return{...p,stock:totalStock(p),real:r,diff:r!==null?r-totalStock(p):null};}).filter(p=>p.real!==null);
   const hasDiff=diffs.some(d=>d.diff!==0);const allFilled=productos.every(p=>real[p.id]!=='');
+  const [sending,setSending]=useState(false);
   const confirm=async()=>{
     const ctrl={fecha:new Date().toLocaleDateString('es-AR'),hora:new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}),items:diffs};
-    await save(ctrl);onSaved();
-    if(hasDiff){showToast(`⚠ Control guardado — diferencias en ${diffs.filter(d=>d.diff!==0).length} producto(s)`,'error');}
-    else{showToast('✓ Stock coincide con lo teórico','ok');}
-    onBack();
+    setSending(true);
+    try{
+      if(GAS_URL){
+        const items=diffs.map(d=>({label:d.label,stock:d.stock,real:d.real,diff:d.diff}));
+        await gasGet({action:'addStockControl',fecha:ctrl.fecha,hora:ctrl.hora,items:JSON.stringify(items),user:user.nombre});
+        await refresh();
+      }
+      await save(ctrl);
+      if(hasDiff){showToast(`⚠ Control guardado${GAS_URL?' en Sheets':''} — diferencias en ${diffs.filter(d=>d.diff!==0).length} producto(s)`,'error');}
+      else{showToast(`✓ Stock coincide con lo teórico${GAS_URL?' (guardado en Sheets)':''}`,'ok');}
+      onBack();
+    }catch(e){ showToast('Error al guardar el control. Intentá de nuevo.','error'); }
+    setSending(false);
   };
   return(<>
       {last&&<div style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:10,padding:'10px 14px',fontFamily:'system-ui',fontSize:12,color:C.muted,marginBottom:16}}>Último control: <strong style={{color:C.text}}>{last.fecha} a las {last.hora}</strong></div>}
@@ -331,7 +345,7 @@ function StockControlBody({productos,showToast,onSaved,onBack}){
           <div style={{color:'#A06070',fontSize:12,marginTop:4,lineHeight:1.5}}>Causas posibles: retiros sin avisar, cobro en especie del depósito, movimientos entre depósitos sin cargar (usá la pestaña "Mover entre depósitos").</div>
         </div>
       )}
-      <Btn onClick={confirm} style={{width:'100%',opacity:allFilled?1:0.5}} disabled={!allFilled}>{allFilled?'Confirmar control de stock':'Completá todos los campos'}</Btn>
+      <Btn onClick={confirm} style={{width:'100%',opacity:(allFilled&&!sending)?1:0.5}} disabled={!allFilled||sending}>{sending?'Guardando…':allFilled?'Confirmar control de stock':'Completá todos los campos'}</Btn>
   </>);
 }
 
@@ -377,9 +391,8 @@ function TransferForm({productos,applyTransfer,user,showToast,onBack,refresh}){
 }
 
 // ── DASHBOARD ────────────────────────────────────────────────────────────
-function DashboardScreen({onNavigate,price,source,ops,productos}){
+function DashboardScreen({onNavigate,price,source,ops,productos,last}){
   const {tc,err:tcErr,date:tcDate}=useDolarBlue();
-  const {last}=useStockControl();
   const total=productos.reduce((s,p)=>s+totalStock(p),0);
   const ars=price?total*price:null; const usd=ars&&tc?Math.round(ars/tc):null;
   const daysSince=last?(()=>{try{const [d,m,y]=last.fecha.split('/');return Math.floor((Date.now()-new Date(`${y}-${m}-${d}`).getTime())/86400000);}catch{return null;}})():null;
@@ -648,9 +661,10 @@ function Nav({screen,setScreen}){
 
 // ── APP ───────────────────────────────────────────────────────────────────
 export default function NovatoApp(){
-  const [user,setUser]=useState(null);const [screen,setScreen]=useState('dashboard');const [toast,setToast]=useState(null);const [settings,setSettings]=useState(false);const [ctrlKey,setCtrlKey]=useState(0);
-  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,clientes,refresh}=useAppData();
+  const [user,setUser]=useState(null);const [screen,setScreen]=useState('dashboard');const [toast,setToast]=useState(null);const [settings,setSettings]=useState(false);
+  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,clientes,ultimoControlStock,refresh}=useAppData();
   const {productos,applyTransfer,applySale}=useProductos(stockUbicacion);
+  const {last,save}=useStockControl(ultimoControlStock);
   const showToast=(msg,type='ok')=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
   const logout=()=>{setUser(null);setSettings(false);setScreen('dashboard');};
   if(!user)return <LoginScreen onLogin={u=>{setUser(u);setScreen('dashboard');}}/>;
@@ -663,10 +677,10 @@ export default function NovatoApp(){
         <button onClick={()=>setSettings(true)} style={{display:'flex',alignItems:'center',gap:7,background:C.cork,border:`1px solid ${C.border}`,borderRadius:20,padding:'6px 13px',color:C.muted,fontSize:12,fontFamily:'system-ui',cursor:'pointer'}}><span>{user.emoji}</span><span>{user.nombre}</span><span style={{color:C.dim,fontSize:10}}>⚙</span></button>
       </div>
       <div style={{paddingBottom:80}}>
-        {screen==='dashboard'&&<DashboardScreen onNavigate={setScreen} price={price} source={source} ops={ops} productos={productos}/>}
+        {screen==='dashboard'&&<DashboardScreen onNavigate={setScreen} price={price} source={source} ops={ops} productos={productos} last={last}/>}
         {screen==='venta'&&<VentaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} price={price} productos={productos} applySale={applySale} clientes={clientes} refresh={refresh}/>}
         {screen==='caja'&&<CajaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes} refresh={refresh}/>}
-        {screen==='stock'&&<StockScreen onBack={()=>setScreen('dashboard')} showToast={showToast} onSaved={()=>setCtrlKey(k=>k+1)} productos={productos} applyTransfer={applyTransfer} user={user} refresh={refresh}/>}
+        {screen==='stock'&&<StockScreen onBack={()=>setScreen('dashboard')} showToast={showToast} productos={productos} applyTransfer={applyTransfer} user={user} refresh={refresh} last={last} save={save}/>}
         {screen==='consultas'&&<ConsultasScreen price={price} productos={productos}/>}
       </div>
       <Nav screen={screen} setScreen={setScreen}/>

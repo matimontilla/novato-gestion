@@ -11,7 +11,8 @@
 
 // Historial de transferencias entre depósitos (NO es la fuente de verdad
 // del stock — eso vive directo en STOCK. Esto es sólo un log de auditoría).
-var TAB_TRANSF = 'APP_TRANSFERENCIAS';
+var TAB_TRANSF  = 'APP_TRANSFERENCIAS';
+var TAB_CONTROL = 'APP_CONTROL_STOCK'; // historial de controles físicos de stock (compartido entre dispositivos)
 
 var UBICACIONES = ['R Peña','Pipi','Lucas','Santi','Mati'];
 
@@ -55,6 +56,7 @@ function doGet(e) {
     else if (action === 'addSale')       result = addSale(e.parameter);
     else if (action === 'addMovement')   result = addMovement(e.parameter);
     else if (action === 'addTransfer')   result = addTransfer(e.parameter);
+    else if (action === 'addStockControl') result = addStockControl(e.parameter);
     else if (action === 'getOps')        result = { ops: getRecentOps(20) };
     else                                 result = { error: 'Acción desconocida: ' + action };
   } catch(err) {
@@ -68,12 +70,13 @@ function doGet(e) {
 // ── GET DATA (carga inicial de la app) ──────────────────────────────
 function getData() {
   return {
-    ok:               true,
-    lastPrice:        getLastSalePrice(),
-    ops:              getRecentOps(20),
-    stockUbicacion:   getStockUbicacion(),
-    ventasPendientes: getVentasPendientes(),
-    clientes:         getClientes()
+    ok:                true,
+    lastPrice:         getLastSalePrice(),
+    ops:               getRecentOps(20),
+    stockUbicacion:    getStockUbicacion(),
+    ventasPendientes:  getVentasPendientes(),
+    clientes:          getClientes(),
+    ultimoControlStock: getUltimoControlStock()
   };
 }
 
@@ -303,6 +306,45 @@ function addTransfer(p) {
   var log = getOrCreateSheet(TAB_TRANSF, headers);
   log.appendRow([p.fecha, p.producto, cantidad, p.desde, p.hacia, p.notas || '', p.user, new Date()]);
   return { ok: true };
+}
+
+// ── CONTROL FÍSICO DE STOCK → historial compartido entre dispositivos ────
+// p.items viene como JSON: [{label, stock, real, diff}, ...] — una fila por producto,
+// todas con el mismo REGISTRADO (timestamp) para poder agruparlas como una sesión.
+function addStockControl(p) {
+  var headers = ['FECHA','HORA','USUARIO','PRODUCTO','TEORICO','REAL','DIFERENCIA','REGISTRADO'];
+  var sheet   = getOrCreateSheet(TAB_CONTROL, headers);
+  var items   = JSON.parse(p.items || '[]');
+  var ahora   = new Date();
+  items.forEach(function(it) {
+    sheet.appendRow([p.fecha, p.hora, p.user, it.label, it.stock, it.real, it.diff, ahora]);
+  });
+  return { ok: true };
+}
+
+// Devuelve el control físico más reciente (agrupando las filas que comparten el
+// mismo REGISTRADO), para que cualquier dispositivo vea el mismo "último control".
+function getUltimoControlStock() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TAB_CONTROL);
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).getValues();
+
+  var maxTs = null;
+  for (var i = 0; i < data.length; i++) {
+    var ts = data[i][7];
+    if (ts instanceof Date && (!maxTs || ts.getTime() > maxTs.getTime())) maxTs = ts;
+  }
+  if (!maxTs) return null;
+
+  var fecha = '', hora = '', items = [];
+  for (var j = 0; j < data.length; j++) {
+    var row = data[j];
+    if (row[7] instanceof Date && row[7].getTime() === maxTs.getTime()) {
+      fecha = row[0]; hora = row[1];
+      items.push({ label: row[3], stock: row[4], real: row[5], diff: row[6] });
+    }
+  }
+  return { fecha: fecha, hora: hora, items: items };
 }
 
 // Lee el estado actual de stock por producto y depósito directo de STOCK
