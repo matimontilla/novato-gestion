@@ -53,7 +53,7 @@ function doGet(e) {
   var result;
   try {
     if      (action === 'getData')       result = getData();
-    else if (action === 'addSale')       result = addSale(e.parameter);
+    else if (action === 'addTransaccion') result = addTransaccion(e.parameter);
     else if (action === 'addMovement')   result = addMovement(e.parameter);
     else if (action === 'addTransfer')   result = addTransfer(e.parameter);
     else if (action === 'addStockControl') result = addStockControl(e.parameter);
@@ -78,8 +78,56 @@ function getData() {
     comprasPendientes:  getComprasPendientes(),
     clientes:           getClientes(),
     ultimoControlStock: getUltimoControlStock(),
-    resumenCajas:       getResumenCajas()
+    resumenCajas:       getResumenCajas(),
+    categorias:         getCategoriasBalance(),
+    contactosBalance:   getContactosBalance()
   };
+}
+
+// Categorías reales usadas en BALANCE (DETALLE: Venta, Retiros, Muestra, Tapones,
+// Flete, etc.) con el signo dominante que tuvieron históricamente (Ingreso/Egreso/
+// Neutro si mayormente vienen en blanco, como Retiros y Muestra que mueven botellas
+// sin plata de por medio) — así el formulario no tiene que preguntar el signo a mano.
+function getCategoriasBalance() {
+  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  if (!balance) return [];
+  var lastRow = balance.getLastRow();
+  if (lastRow < 3) return [];
+  var data = balance.getRange(3, 3, lastRow - 2, 5).getValues(); // C..G: DETALLE,SUBDETALLE,PRODUCTO,AÑADA,MONTO $
+  var stats = {};
+  for (var i = 0; i < data.length; i++) {
+    var det = data[i][0];
+    if (!det || det === 'TOTALES:') continue;
+    var m = data[i][4];
+    if (!stats[det]) stats[det] = { pos: 0, neg: 0, total: 0 };
+    stats[det].total++;
+    if (typeof m === 'number') { if (m > 0) stats[det].pos++; else if (m < 0) stats[det].neg++; }
+  }
+  var lista = [];
+  for (var det2 in stats) {
+    var s = stats[det2];
+    var tipo = (s.pos === 0 && s.neg === 0) ? 'Neutro' : (s.neg > s.pos ? 'Egreso' : 'Ingreso');
+    lista.push({ detalle: det2, tipo: tipo, total: s.total });
+  }
+  lista.sort(function(a, b) { return b.total - a.total; });
+  return lista;
+}
+
+// Contactos reales (SUBDETALLE) vistos en BALANCE — clientes Y proveedores mezclados,
+// para el selector de "Cliente/Proveedor" del formulario general de transacciones.
+function getContactosBalance() {
+  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  if (!balance) return [];
+  var lastRow = balance.getLastRow();
+  if (lastRow < 3) return [];
+  var data = balance.getRange(3, 4, lastRow - 2, 1).getValues(); // D SUBDETALLE
+  var vistos = {}, lista = [];
+  for (var i = 0; i < data.length; i++) {
+    var v = data[i][0];
+    if (v && !vistos[v]) { vistos[v] = true; lista.push(v); }
+  }
+  lista.sort();
+  return lista;
 }
 
 // Lee el cuadro "CAJAS" (AR$ / USD / CRYPTO por caja) que ya existe al pie de la
@@ -220,7 +268,7 @@ function nextReferencia(prefix) {
 
 // Escribe (o reescribe) las columnas calculadas de una fila de BALANCE: AÑADA, MONTO
 // US$ FF/FP, CU $/US$, CONCEPTO, SALDO $/US$, % DIF POR TC y AÑO. Se usa tanto para
-// filas nuevas (addSale) como para reparar filas rotas (repararBalance). IMPORTANTE:
+// filas nuevas (addTransaccion) como para reparar filas rotas (repararBalance). IMPORTANTE:
 // este Sheet usa configuración regional en español → los argumentos de función van
 // separados por PUNTO Y COMA (;), no coma. Escribir con comas produce #ERROR!.
 function escribirFormulasBalance(row) {
@@ -244,38 +292,49 @@ function escribirFormulasBalance(row) {
 // Registra la venta en BALANCE (con las mismas fórmulas que usa cualquier fila
 // cargada a mano) y descuenta el depósito de origen en STOCK. NO toca CAJA:
 // eso sólo pasa cuando se registre el cobro correspondiente.
-function addSale(p) {
+// Registra una transacción general en BALANCE (Venta, Retiros, Muestra, Ajuste,
+// o cualquier categoría real de costo como Tapones/Flete/Elaboracion). El signo del
+// monto se determina solo según el historial de esa categoría (getCategoriasBalance):
+// Ingreso→positivo, Egreso→negativo, Neutro→tal cual se tipeó (Retiros/Muestra suelen
+// ir en 0, sin plata de por medio). Descuenta stock sólo si vienen producto Y botellas.
+function addTransaccion(p) {
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   if (!balance) throw new Error('No se encontró la pestaña BALANCE');
 
-  var productoSheet  = PRODUCTO_APP_TO_SHEET[p.producto] || p.producto;
-  var rate           = getDolarRate(p.fecha);
-  var montoIngresado = parseFloat(p.monto) || 0;
-  // MONTO $ en BALANCE siempre es en pesos; si la venta se cargó en USD, la pasamos
-  // a pesos con la cotización del día para que las fórmulas de abajo sean consistentes.
-  var montoArs = (p.moneda === 'USD' && rate) ? Math.round(montoIngresado * rate) : montoIngresado;
+  var detalle       = p.detalle || 'Venta';
+  var productoSheet = p.producto ? (PRODUCTO_APP_TO_SHEET[p.producto] || p.producto) : '';
+  var botellas      = parseInt(p.botellas) || 0;
+  var contacto       = p.contacto || '';
 
-  var cliente    = p.cliente || 'Particular';
-  var referencia = nextReferencia(prefijoCliente(cliente));
-  var ultimaReal = obtenerUltimaFilaConFecha(balance, 2); // B = FECHA
+  var categorias = getCategoriasBalance();
+  var cat  = categorias.filter(function(c) { return c.detalle === detalle; })[0];
+  var tipo = cat ? cat.tipo : 'Ingreso'; // categoría nunca vista antes → asumimos Ingreso
+
+  var montoTipeado = parseFloat(p.monto) || 0;
+  var montoArs;
+  if (tipo === 'Egreso') montoArs = -Math.abs(montoTipeado);
+  else if (tipo === 'Ingreso') montoArs = Math.abs(montoTipeado);
+  else montoArs = montoTipeado; // Neutro: tal cual (Retiros/Muestra suelen quedar en 0)
+
+  var referencia = nextReferencia(prefijoCliente(contacto || detalle));
+  var ultimaReal  = obtenerUltimaFilaConFecha(balance, 2); // B = FECHA
   balance.insertRowAfter(ultimaReal);
   var row = ultimaReal + 1;
 
-  // Datos que vienen del usuario
-  balance.getRange(row, 2).setValue(parseFechaApp(p.fecha));    // B FECHA
-  balance.getRange(row, 3).setValue('Venta');                   // C DETALLE
-  balance.getRange(row, 4).setValue(cliente);                   // D SUBDETALLE
-  balance.getRange(row, 5).setValue(productoSheet);              // E PRODUCTO
-  balance.getRange(row, 7).setValue(montoArs);                   // G MONTO $
-  balance.getRange(row, 12).setValue(referencia);                // L REFERENCIA
-  balance.getRange(row, 13).setValue(parseInt(p.botellas) || 0); // M BOTELLAS
-  balance.getRange(row, 1).setValue(p.user || '');               // A: quién lo cargó (columna sin uso hasta ahora)
+  balance.getRange(row, 2).setValue(parseFechaApp(p.fecha)); // B FECHA
+  balance.getRange(row, 3).setValue(detalle);                // C DETALLE
+  balance.getRange(row, 4).setValue(contacto);                // D SUBDETALLE
+  balance.getRange(row, 5).setValue(productoSheet);           // E PRODUCTO
+  balance.getRange(row, 7).setValue(montoArs);                // G MONTO $
+  balance.getRange(row, 12).setValue(referencia);             // L REFERENCIA
+  balance.getRange(row, 13).setValue(botellas);               // M BOTELLAS
+  balance.getRange(row, 1).setValue(p.user || '');            // A: quién lo cargó
 
-  // Columnas calculadas — mismas fórmulas que cualquier fila cargada a mano
   escribirFormulasBalance(row);
 
-  // Descuenta del depósito de origen (por defecto R Peña si no se especificó)
-  ajustarStockUbicacion(p.producto, p.deposito || 'R Peña', null, parseInt(p.botellas) || 0);
+  if (productoSheet && botellas > 0) {
+    ajustarStockUbicacion(p.producto, p.deposito || 'R Peña', null, botellas);
+  }
 
   return { ok: true, referencia: referencia };
 }
@@ -554,7 +613,7 @@ function getRecentOps(n) {
 // ── UTILIDAD OPCIONAL — correr UNA VEZ a mano si querés ────────────────
 // Reescribe TODAS las fórmulas calculadas de BALANCE (sin importar en qué estado
 // estén — rotas, con rango viejo, o directamente bien) usando las mismas plantillas
-// que addSale, más la fila de TOTALES (con una fórmula basada en ROW() que no
+// que addTransaccion, más la fila de TOTALES (con una fórmula basada en ROW() que no
 // depende de ningún número de fila fijo, así nunca vuelve a quedar corta ni corre
 // riesgo de auto-referenciarse) y el EGRESOS agregado de STOCK (rango abierto real
 // hacia BALANCE). Es un arreglo definitivo — no perjudica nada si se corre de nuevo.
@@ -564,15 +623,30 @@ function repararTodasLasFormulas() {
   if (lastRow < 3) { Logger.log('BALANCE está vacío, nada para reparar.'); return; }
 
   var n = lastRow - 2;
-  var fechas    = balance.getRange(3, 2, n, 1).getValues();  // B FECHA — 1 sola llamada para todo el rango
-  var conceptos = balance.getRange(3, 14, n, 1).getValues(); // N — para ubicar la fila 'TOTALES:'
+  var fechas      = balance.getRange(3, 2, n, 1).getValues();  // B FECHA — 1 sola llamada para todo el rango
+  var conceptos   = balance.getRange(3, 14, n, 1).getValues(); // N — para ubicar la fila 'TOTALES:'
+  var referencias = balance.getRange(3, 12, n, 1).getValues(); // L — para detectar costos prorrateados
+
+  // Si una REFERENCIA aparece en más de una fila, es un costo indirecto prorrateado
+  // entre varios productos (ej. CCI22-001 repartido entre los 3 vinos de 2022 según
+  // su % de producción) — ahí MONTO $ ya es una fórmula que mira a CAJA directamente,
+  // así que el SALDO de reconciliación fila-por-fila no tiene sentido y se deja en
+  // blanco a propósito. Detectarlo por repetición evita tener que listar códigos a mano.
+  var conteoRef = {};
+  for (var c = 0; c < n; c++) {
+    var ref = referencias[c][0];
+    if (ref) conteoRef[ref] = (conteoRef[ref] || 0) + 1;
+  }
 
   var filaTotales = -1;
-  var filas = [];
+  var filas = [], filasProrrateadas = [];
   for (var i = 0; i < n; i++) {
     var row = i + 3;
     if (conceptos[i][0] === 'TOTALES:') { filaTotales = row; continue; }
-    if (fechas[i][0] instanceof Date) filas.push(row);
+    if (fechas[i][0] instanceof Date) {
+      filas.push(row);
+      if (referencias[i][0] && conteoRef[referencias[i][0]] > 1) filasProrrateadas.push(row);
+    }
   }
 
   // Agrupar en bloques consecutivos, para escribir cada bloque con UNA sola llamada
@@ -609,6 +683,21 @@ function repararTodasLasFormulas() {
     balance.getRange(inicio, 14, grupo.length, 1).setValues(colN);
     balance.getRange(inicio, 15, grupo.length, 4).setValues(colOR);
   });
+
+  // Ahora sí, dejar en blanco O:Q (SALDO $, SALDO US$, % DIF) de las filas prorrateadas,
+  // agrupadas en bloques consecutivos igual que arriba.
+  if (filasProrrateadas.length) {
+    var gruposProrr = [], actualP = [];
+    for (var gp = 0; gp < filasProrrateadas.length; gp++) {
+      if (actualP.length === 0 || filasProrrateadas[gp] === actualP[actualP.length - 1] + 1) actualP.push(filasProrrateadas[gp]);
+      else { gruposProrr.push(actualP); actualP = [filasProrrateadas[gp]]; }
+    }
+    if (actualP.length) gruposProrr.push(actualP);
+    gruposProrr.forEach(function(grupo) {
+      var vacio = grupo.map(function(){ return ['', '', '']; });
+      balance.getRange(grupo[0], 15, grupo.length, 3).setValues(vacio); // O:Q
+    });
+  }
 
   if (filaTotales > 0) {
     // ROW()-1 apunta siempre a "la fila justo arriba mío", sin importar cuánto se

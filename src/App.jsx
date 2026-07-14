@@ -99,7 +99,6 @@ function useProductos(backendStock) {
 
   return { productos, applyTransfer, applySale };
 }
-const CLIENTES_FALLBACK = ['Angela San Rafael','Bahia Blanca','Carlos De Aquín','Adriana Laos','Chacho Andia','Mosto Divino','Organyca','Particular','Rosario','Santiago MDQ'];
 const CAJAS    = ['Empresa (Ludico)','Mati','Lucas','Pipi (Andrés)','Santi'];
 const CANALES  = ['Vinoteca','Distribuidor','Restaurant','Directo','Exportación','Otro'];
 
@@ -137,6 +136,8 @@ function useAppData() {
   const [ventasPendientes, setVentasPendientes] = useState([]); // [{referencia,cliente,producto,saldoArs,saldoUsd}]
   const [comprasPendientes, setComprasPendientes] = useState([]); // [{referencia,detalle,proveedor,producto,saldoArs,saldoUsd}]
   const [clientes, setClientes] = useState([]); // [{nombre,canal,activo}] — real, desde la pestaña CLIENTES
+  const [categorias, setCategorias] = useState([]); // [{detalle,tipo,total}] — categorías reales de BALANCE (Venta, Retiros, Muestra, Tapones, etc.)
+  const [contactosBalance, setContactosBalance] = useState([]); // clientes Y proveedores mezclados, desde SUBDETALLE
   const [ultimoControlStock, setUltimoControlStock] = useState(undefined); // undefined=sin cargar aún; null=cargó y no hay control; objeto=hay control
   const [resumenCajas, setResumenCajas] = useState([]); // [{caja,ars,usd,crypto}] — real, desde el cuadro CAJAS al pie de CAJA
 
@@ -157,6 +158,8 @@ function useAppData() {
         if (d.ventasPendientes) setVentasPendientes(d.ventasPendientes);
         if (d.comprasPendientes) setComprasPendientes(d.comprasPendientes);
         if (d.clientes?.length) setClientes(d.clientes);
+        if (d.categorias?.length) setCategorias(d.categorias);
+        if (d.contactosBalance?.length) setContactosBalance(d.contactosBalance);
         setUltimoControlStock(d.ultimoControlStock ?? null);
         if (d.resumenCajas) setResumenCajas(d.resumenCajas);
       }
@@ -171,7 +174,7 @@ function useAppData() {
     try { localStorage.setItem('ops', JSON.stringify(next)); } catch {}
   };
 
-  return { price, source, ops, addOp, refresh, stockUbicacion, ventasPendientes, comprasPendientes, clientes, ultimoControlStock, resumenCajas };
+  return { price, source, ops, addOp, refresh, stockUbicacion, ventasPendientes, comprasPendientes, clientes, categorias, contactosBalance, ultimoControlStock, resumenCajas };
 }
 
 function useStockControl(backendControl) {
@@ -511,36 +514,45 @@ function DashboardScreen({onNavigate,price,source,ops,productos,last}){
 }
 
 // ── NUEVA VENTA ──────────────────────────────────────────────────────────
-function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clientes,refresh}){
+function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clientes,categorias,contactosBalance,refresh}){
   const hoy=new Date().toISOString().split('T')[0];
-  const [f,setF]=useState({producto:'',botellas:'',cliente:'',clienteNuevo:'',canal:'',monto:'',moneda:'ARS',fecha:hoy,notas:'',deposito:''});
+  const [f,setF]=useState({detalle:'Venta',producto:'',botellas:'',contacto:'',contactoNuevo:'',canal:'',monto:'',fecha:hoy,deposito:''});
   const [sending,setSending]=useState(false);
   const set=(k,v)=>setF(p=>({...p,[k]:v}));
   const prod=productos.find(p=>p.id===f.producto);
-  const listaClientes = clientes?.length ? clientes.map(c=>c.nombre) : CLIENTES_FALLBACK;
-  const clienteInfo = clientes?.find(c=>c.nombre===f.cliente);
-  const setCliente = (nombre) => {
-    setF(p=>({...p, cliente:nombre, canal: clientes?.find(c=>c.nombre===nombre)?.canal || p.canal }));
+  const esVenta=f.detalle==='Venta';
+  const catInfo=categorias?.find(c=>c.detalle===f.detalle);
+  const tipoBadge=catInfo?.tipo||'Ingreso';
+
+  const listaDetalles = categorias?.length ? categorias.map(c=>c.detalle) : ['Venta'];
+  const listaContactos = Array.from(new Set([...(clientes?.map(c=>c.nombre)||[]), ...(contactosBalance||[])])).sort((a,b)=>a.localeCompare(b,'es'));
+  const clienteInfo = esVenta ? clientes?.find(c=>c.nombre===f.contacto) : null;
+  const setContacto = (nombre) => {
+    setF(p=>({...p, contacto:nombre, canal: clientes?.find(c=>c.nombre===nombre)?.canal || p.canal }));
   };
-  const sug=price&&f.botellas?price*parseInt(f.botellas||0):null;
+
+  const sug=esVenta&&price&&f.botellas?price*parseInt(f.botellas||0):null;
+  const requiereStock=parseInt(f.botellas||0)>0;
   const disponibleEnDeposito=prod&&f.deposito?(prod.stockUbic[f.deposito]||0):null;
+
   const submit=async()=>{
-    if(!f.producto||!f.botellas||!f.cliente||!f.deposito||(f.cliente==='Nuevo cliente…'&&!f.clienteNuevo)){showToast('Completá los campos obligatorios','error');return;}
-    const cant=parseInt(f.botellas);
-    if(disponibleEnDeposito!==null&&cant>disponibleEnDeposito){showToast(`Sólo hay ${disponibleEnDeposito} bot en ${f.deposito}`,'error');return;}
-    const cl=f.cliente==='Nuevo cliente…'?f.clienteNuevo:f.cliente;
+    if(!f.detalle||!f.contacto||(f.contacto==='Nuevo…'&&!f.contactoNuevo)){showToast('Completá los campos obligatorios','error');return;}
+    if(requiereStock&&(!f.producto||!f.deposito)){showToast('Con botellas, indicá producto y depósito','error');return;}
+    const cant=parseInt(f.botellas)||0;
+    if(requiereStock&&disponibleEnDeposito!==null&&cant>disponibleEnDeposito){showToast(`Sólo hay ${disponibleEnDeposito} bot en ${f.deposito}`,'error');return;}
+    const ct=f.contacto==='Nuevo…'?f.contactoNuevo:f.contacto;
     setSending(true);
     try {
       let referencia='';
       if(GAS_URL){
-        const r=await gasGet({action:'addSale',fecha:f.fecha,producto:prod?.label,botellas:f.botellas,monto:f.monto||0,moneda:f.moneda,cliente:cl,canal:f.canal||'',notas:f.notas||'',deposito:f.deposito,user:user.nombre});
+        const r=await gasGet({action:'addTransaccion',fecha:f.fecha,detalle:f.detalle,producto:prod?.label||'',botellas:cant,monto:f.monto||0,contacto:ct,canal:esVenta?(f.canal||''):'',deposito:f.deposito,user:user.nombre});
         referencia=r?.referencia||'';
       }
-      applySale({productoId:f.producto,deposito:f.deposito,cantidad:cant});
-      const montoStr=f.monto?`$${parseInt(f.monto).toLocaleString('es-AR')} ${f.moneda}`:'sin monto';
-      await addOp({id:Date.now(),icon:'🍾',desc:`${f.botellas} bot ${prod?.label} → ${cl}`,monto:montoStr,fecha:new Date(f.fecha+'T12:00').toLocaleDateString('es-AR'),user:user.nombre});
+      if(requiereStock) applySale({productoId:f.producto,deposito:f.deposito,cantidad:cant});
+      const montoStr=f.monto?`$${parseInt(f.monto).toLocaleString('es-AR')}`:'sin monto';
+      await addOp({id:Date.now(),icon:esVenta?'🍾':'📋',desc:`${f.detalle}${cant?` · ${cant} bot`:''}${prod?` ${prod.label}`:''} → ${ct}`,monto:montoStr,fecha:new Date(f.fecha+'T12:00').toLocaleDateString('es-AR'),user:user.nombre});
       if(GAS_URL) await refresh();
-      showToast(`✓ Venta registrada en BALANCE${referencia?' ('+referencia+')':''}`,'ok');
+      showToast(`✓ ${f.detalle} registrada en BALANCE${referencia?' ('+referencia+')':''}`,'ok');
       onBack();
     } catch(e){ showToast('Error al registrar. Intentá de nuevo.','error'); }
     setSending(false);
@@ -549,32 +561,44 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
     <div style={{padding:'20px 16px',maxWidth:500,margin:'0 auto'}}>
       <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:24}}>
         <button onClick={onBack} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:8,padding:'8px 12px',color:C.muted,cursor:'pointer',fontSize:16}}>←</button>
-        <div><div style={{color:C.text,fontWeight:700,fontSize:18,fontFamily:'Georgia, serif'}}>Nueva venta</div><div style={{color:C.dim,fontSize:12,fontFamily:'system-ui'}}>Registrar movimiento de stock</div></div>
+        <div><div style={{color:C.text,fontWeight:700,fontSize:18,fontFamily:'Georgia, serif'}}>Nueva transacción</div><div style={{color:C.dim,fontSize:12,fontFamily:'system-ui'}}>Registrar en BALANCE</div></div>
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
-        <F label="Producto *"><Sel value={f.producto} onChange={e=>set('producto',e.target.value)}><option value="">Seleccionar…</option>{productos.filter(p=>totalStock(p)>0).map(p=><option key={p.id} value={p.id}>{p.label} — {totalStock(p).toLocaleString('es-AR')} bot</option>)}</Sel></F>
+        <F label="Detalle *">
+          <Sel value={f.detalle} onChange={e=>set('detalle',e.target.value)}>
+            {listaDetalles.map(d=><option key={d} value={d}>{d}</option>)}
+          </Sel>
+        </F>
+        {tipoBadge!=='Neutro'&&<div style={{fontSize:11,color:C.dim,fontFamily:'system-ui',marginTop:-8}}>Se registra como <strong style={{color:tipoBadge==='Ingreso'?'#7dce9b':'#f08080'}}>{tipoBadge.toLowerCase()}</strong> automáticamente.</div>}
+        <F label="Cliente / Proveedor *">
+          <Sel value={f.contacto} onChange={e=>setContacto(e.target.value)}>
+            <option value="">Seleccionar…</option>
+            {listaContactos.map(c=><option key={c} value={c}>{c}</option>)}
+            <option value="Nuevo…">Nuevo…</option>
+          </Sel>
+        </F>
+        {clienteInfo&&!clienteInfo.activo&&<div style={{background:C.wineBg,border:`1px solid ${C.wine}55`,borderRadius:10,padding:'8px 14px',fontFamily:'system-ui',fontSize:12,color:'#E07080'}}>⚠ {f.contacto} figura inactivo — última operación hace tiempo</div>}
+        {f.contacto==='Nuevo…'&&<F label="Nombre"><Inp placeholder="Nombre o comercio" value={f.contactoNuevo} onChange={e=>set('contactoNuevo',e.target.value)}/></F>}
+        <F label={`Producto${requiereStock?' *':' (opcional)'}`}>
+          <Sel value={f.producto} onChange={e=>set('producto',e.target.value)}>
+            <option value="">Seleccionar…</option>
+            {productos.filter(p=>!requiereStock||totalStock(p)>0).map(p=><option key={p.id} value={p.id}>{p.label}{totalStock(p)>0?` — ${totalStock(p).toLocaleString('es-AR')} bot`:''}</option>)}
+          </Sel>
+        </F>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-          <F label="Depósito de origen *"><Sel value={f.deposito} onChange={e=>set('deposito',e.target.value)}><option value="">Seleccionar…</option>{UBICACIONES.filter(u=>!prod||(prod.stockUbic[u]||0)>0).map(u=><option key={u} value={u}>{u}{prod?` (${prod.stockUbic[u]||0})`:''}</option>)}</Sel></F>
-          <F label="Botellas *"><Inp type="number" min="1" max={disponibleEnDeposito||(prod?totalStock(prod):undefined)} placeholder="0" value={f.botellas} onChange={e=>set('botellas',e.target.value)}/></F>
+          <F label={`Depósito${requiereStock?' *':' (opcional)'}`}>
+            <Sel value={f.deposito} onChange={e=>set('deposito',e.target.value)}>
+              <option value="">Seleccionar…</option>
+              {UBICACIONES.filter(u=>!prod||(prod.stockUbic[u]||0)>0).map(u=><option key={u} value={u}>{u}{prod?` (${prod.stockUbic[u]||0})`:''}</option>)}
+            </Sel>
+          </F>
+          <F label="Botellas (opcional)"><Inp type="number" min="0" max={disponibleEnDeposito||(prod?totalStock(prod):undefined)} placeholder="0" value={f.botellas} onChange={e=>set('botellas',e.target.value)}/></F>
         </div>
         <F label="Fecha"><Inp type="date" value={f.fecha} onChange={e=>set('fecha',e.target.value)}/></F>
         {sug&&<div style={{background:C.greenBg,border:`1px solid ${C.green}55`,borderRadius:10,padding:'10px 14px',fontFamily:'system-ui',fontSize:13}}><span style={{color:C.muted}}>Monto sugerido: </span><strong style={{color:'#7dce9b'}}>${sug.toLocaleString('es-AR')}</strong><span style={{color:C.dim}}> (${price.toLocaleString('es-AR')}/bot · última venta)</span></div>}
-        <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:12}}>
-          <F label="Monto total *"><Inp type="number" placeholder="0" value={f.monto} onChange={e=>set('monto',e.target.value)}/></F>
-          <F label="Moneda"><Sel value={f.moneda} onChange={e=>set('moneda',e.target.value)}><option value="ARS">ARS $</option><option value="USD">USD $</option></Sel></F>
-        </div>
-        <F label="Cliente *">
-          <Sel value={f.cliente} onChange={e=>setCliente(e.target.value)}>
-            <option value="">Seleccionar…</option>
-            {listaClientes.map(c=><option key={c} value={c}>{c}</option>)}
-            <option value="Nuevo cliente…">Nuevo cliente…</option>
-          </Sel>
-        </F>
-        {clienteInfo&&!clienteInfo.activo&&<div style={{background:C.wineBg,border:`1px solid ${C.wine}55`,borderRadius:10,padding:'8px 14px',fontFamily:'system-ui',fontSize:12,color:'#E07080'}}>⚠ {f.cliente} figura inactivo — última operación hace tiempo</div>}
-        {f.cliente==='Nuevo cliente…'&&<F label="Nombre nuevo cliente"><Inp placeholder="Nombre o comercio" value={f.clienteNuevo} onChange={e=>set('clienteNuevo',e.target.value)}/></F>}
-        <F label="Canal"><Sel value={f.canal} onChange={e=>set('canal',e.target.value)}><option value="">Seleccionar…</option>{CANALES.map(c=><option key={c} value={c}>{c}</option>)}</Sel></F>
-        <F label="Notas"><Inp placeholder="Referencia, condiciones de pago, etc." value={f.notas} onChange={e=>set('notas',e.target.value)}/></F>
-        <div style={{display:'flex',gap:10}}><Btn variant="ghost" onClick={onBack} style={{flex:1}}>Cancelar</Btn><Btn onClick={submit} style={{flex:2,opacity:sending?0.6:1}} disabled={sending}>{sending?'Registrando…':'Registrar venta'}</Btn></div>
+        <F label="Monto (opcional, $ ARS)"><Inp type="number" placeholder="0" value={f.monto} onChange={e=>set('monto',e.target.value)}/></F>
+        {esVenta&&<F label="Canal"><Sel value={f.canal} onChange={e=>set('canal',e.target.value)}><option value="">Seleccionar…</option>{CANALES.map(c=><option key={c} value={c}>{c}</option>)}</Sel></F>}
+        <div style={{display:'flex',gap:10}}><Btn variant="ghost" onClick={onBack} style={{flex:1}}>Cancelar</Btn><Btn onClick={submit} style={{flex:2,opacity:sending?0.6:1}} disabled={sending}>{sending?'Registrando…':'Registrar'}</Btn></div>
       </div>
     </div>
   );
@@ -706,14 +730,14 @@ function ConsultasScreen({price,productos}){
 
 // ── NAV ──────────────────────────────────────────────────────────────────
 function Nav({screen,setScreen}){
-  const tabs=[{id:'dashboard',icon:'⌂',l:'Inicio'},{id:'venta',icon:'🍾',l:'Venta'},{id:'caja',icon:'⇄',l:'Caja'},{id:'stock',icon:'📦',l:'Stock'},{id:'consultas',icon:'✦',l:'Asistente'}];
+  const tabs=[{id:'dashboard',icon:'⌂',l:'Inicio'},{id:'venta',icon:'🍾',l:'Cargar'},{id:'caja',icon:'⇄',l:'Caja'},{id:'stock',icon:'📦',l:'Stock'},{id:'consultas',icon:'✦',l:'Asistente'}];
   return(<div style={{position:'fixed',bottom:0,left:0,right:0,background:C.barrel,borderTop:`1px solid ${C.border}`,display:'flex',zIndex:200,paddingBottom:'env(safe-area-inset-bottom, 0px)'}}>{tabs.map(t=><button key={t.id} onClick={()=>setScreen(t.id)} style={{flex:1,padding:'10px 2px 12px',background:'none',border:'none',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:2}}><span style={{fontSize:t.id==='dashboard'?20:17,opacity:screen===t.id?1:0.35}}>{t.icon}</span><span style={{fontSize:9,fontFamily:'system-ui',color:screen===t.id?C.gold:C.dim,fontWeight:screen===t.id?700:400}}>{t.l}</span></button>)}</div>);
 }
 
 // ── APP ───────────────────────────────────────────────────────────────────
 export default function NovatoApp(){
   const [user,setUser]=useState(null);const [screen,setScreen]=useState('dashboard');const [toast,setToast]=useState(null);const [settings,setSettings]=useState(false);
-  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,comprasPendientes,clientes,ultimoControlStock,resumenCajas,refresh}=useAppData();
+  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,comprasPendientes,clientes,categorias,contactosBalance,ultimoControlStock,resumenCajas,refresh}=useAppData();
   const {productos,applyTransfer,applySale}=useProductos(stockUbicacion);
   const {last,save}=useStockControl(ultimoControlStock);
   const showToast=(msg,type='ok')=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
@@ -729,7 +753,7 @@ export default function NovatoApp(){
       </div>
       <div style={{paddingBottom:80}}>
         {screen==='dashboard'&&<DashboardScreen onNavigate={setScreen} price={price} source={source} ops={ops} productos={productos} last={last}/>}
-        {screen==='venta'&&<VentaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} price={price} productos={productos} applySale={applySale} clientes={clientes} refresh={refresh}/>}
+        {screen==='venta'&&<VentaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} price={price} productos={productos} applySale={applySale} clientes={clientes} categorias={categorias} contactosBalance={contactosBalance} refresh={refresh}/>}
         {screen==='caja'&&<CajaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes} comprasPendientes={comprasPendientes} refresh={refresh} resumenCajas={resumenCajas}/>}
         {screen==='stock'&&<StockScreen onBack={()=>setScreen('dashboard')} showToast={showToast} productos={productos} applyTransfer={applyTransfer} user={user} refresh={refresh} last={last} save={save}/>}
         {screen==='consultas'&&<ConsultasScreen price={price} productos={productos}/>}
