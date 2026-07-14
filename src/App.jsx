@@ -618,18 +618,21 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
 }
 
 // ── CAJA ─────────────────────────────────────────────────────────────────
-function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,comprasPendientes,refresh,resumenCajas}){
+function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,comprasPendientes,refresh,resumenCajas,categorias,contactosBalance,clientes}){
   const hoy=new Date().toISOString().split('T')[0];
-  const [f,setF]=useState({tipo:'cobro',monto:'',moneda:'ARS',caja:'Empresa (Ludico)',concepto:'',fecha:hoy,referencia:''});
+  const [f,setF]=useState({tipo:'cobro',monto:'',caja:'Empresa (Ludico)',detalle:'',contacto:'',contactoNuevo:'',fecha:hoy,referencia:''});
   const [sending,setSending]=useState(false);
-  const set=(k,v)=>setF(p=>({...p,[k]:v}));
+  const set=(k,v)=>setF(p=>({...p,[k]:v,...((k==='detalle'||k==='contacto')?{referencia:''}:{})}));
+  const listaDetalles = categorias?.length ? categorias.map(c=>c.detalle) : ['Cobro','Gasto'];
+  const listaContactos = Array.from(new Set([...(clientes?.map(c=>c.nombre)||[]), ...(contactosBalance||[])])).sort((a,b)=>a.localeCompare(b,'es'));
   const submit=async()=>{
-    if(!f.monto||!f.concepto){showToast('Completá los campos obligatorios','error');return;}
+    if(!f.monto||!f.detalle||!f.contacto||(f.contacto==='Nuevo…'&&!f.contactoNuevo)){showToast('Completá los campos obligatorios','error');return;}
+    const ct=f.contacto==='Nuevo…'?f.contactoNuevo:f.contacto;
     setSending(true);
     try {
-      if(GAS_URL) await gasGet({action:'addMovement',fecha:f.fecha,tipo:f.tipo,monto:f.monto,moneda:f.moneda,caja:f.caja,concepto:f.concepto,referencia:f.referencia||'',user:user.nombre});
+      if(GAS_URL) await gasGet({action:'addMovement',fecha:f.fecha,tipo:f.tipo,monto:f.monto,caja:f.caja,detalle:f.detalle,contacto:ct,referencia:f.referencia||'',user:user.nombre});
       const icon=f.tipo==='cobro'?'💵':'💸';
-      await addOp({id:Date.now(),icon,desc:`${f.tipo==='cobro'?'Cobro':'Gasto'}: ${f.concepto}`,monto:`${f.moneda} ${parseInt(f.monto).toLocaleString('es-AR')}`,fecha:new Date(f.fecha+'T12:00').toLocaleDateString('es-AR'),user:user.nombre});
+      await addOp({id:Date.now(),icon,desc:`${f.detalle}: ${ct}`,monto:`$${parseInt(f.monto).toLocaleString('es-AR')}`,fecha:new Date(f.fecha+'T12:00').toLocaleDateString('es-AR'),user:user.nombre});
       if(GAS_URL) await refresh();
       showToast(`✓ Movimiento registrado${GAS_URL?' en CAJA':''}`,'ok');
       onBack();
@@ -668,12 +671,22 @@ function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,comprasPendien
         ))}
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
-        <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:12}}>
-          <F label="Monto *"><Inp type="number" placeholder="0" value={f.monto} onChange={e=>set('monto',e.target.value)}/></F>
-          <F label="Moneda"><Sel value={f.moneda} onChange={e=>set('moneda',e.target.value)}><option value="ARS">ARS $</option><option value="USD">USD $</option></Sel></F>
-        </div>
+        <F label="Monto *"><Inp type="number" placeholder="0" value={f.monto} onChange={e=>set('monto',e.target.value)}/></F>
         <F label={f.tipo==='cobro'?'Caja que recibe':'Caja de la que sale'}><Sel value={f.caja} onChange={e=>set('caja',e.target.value)}>{CAJAS.map(c=><option key={c} value={c}>{c}</option>)}</Sel></F>
-        <F label="Concepto *"><Inp placeholder={f.tipo==='cobro'?'Ej: Cobro factura Organyca':'Ej: Pago etiquetas'} value={f.concepto} onChange={e=>set('concepto',e.target.value)}/></F>
+        <F label="Detalle *">
+          <Sel value={f.detalle} onChange={e=>set('detalle',e.target.value)}>
+            <option value="">Seleccionar…</option>
+            {listaDetalles.map(d=><option key={d} value={d}>{d}</option>)}
+          </Sel>
+        </F>
+        <F label="Cliente / Proveedor *">
+          <Sel value={f.contacto} onChange={e=>set('contacto',e.target.value)}>
+            <option value="">Seleccionar…</option>
+            {listaContactos.map(c=><option key={c} value={c}>{c}</option>)}
+            <option value="Nuevo…">Nuevo…</option>
+          </Sel>
+        </F>
+        {f.contacto==='Nuevo…'&&<F label="Nombre"><Inp placeholder="Nombre o comercio" value={f.contactoNuevo} onChange={e=>set('contactoNuevo',e.target.value)}/></F>}
         {f.tipo==='cobro'&&ventasPendientes?.length>0&&(
           <F label="Vincular a venta pendiente (opcional)">
             <Sel value={f.referencia} onChange={e=>set('referencia',e.target.value)}>
@@ -767,7 +780,7 @@ export default function NovatoApp(){
       <div style={{paddingBottom:80}}>
         {screen==='dashboard'&&<DashboardScreen onNavigate={setScreen} price={price} source={source} productos={productos} last={last} operacionesPendientes={operacionesPendientes}/>}
         {screen==='venta'&&<VentaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} price={price} productos={productos} applySale={applySale} clientes={clientes} categorias={categorias} contactosBalance={contactosBalance} refresh={refresh}/>}
-        {screen==='caja'&&<CajaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes} comprasPendientes={comprasPendientes} refresh={refresh} resumenCajas={resumenCajas}/>}
+        {screen==='caja'&&<CajaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes} comprasPendientes={comprasPendientes} refresh={refresh} resumenCajas={resumenCajas} categorias={categorias} contactosBalance={contactosBalance} clientes={clientes}/>}
         {screen==='stock'&&<StockScreen onBack={()=>setScreen('dashboard')} showToast={showToast} productos={productos} applyTransfer={applyTransfer} user={user} refresh={refresh} last={last} save={save}/>}
         {screen==='consultas'&&<ConsultasScreen price={price} productos={productos}/>}
       </div>

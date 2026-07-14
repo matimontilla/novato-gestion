@@ -430,15 +430,15 @@ function addMovement(p) {
   caja.insertRowAfter(ultimaReal);
   var row = ultimaReal + 1;
   caja.getRange(row, 1, 1, 9).setValues([[
-    p.user || '',                              // A: quién lo cargó (columna sin uso hasta ahora)
-    parseFechaApp(p.fecha),                    // B FECHA
-    p.tipo === 'cobro' ? 'Cobro' : 'Gasto',    // C DETALLE
-    p.concepto || '',                          // D SUBDETALLE
-    '',                                        // E PRODUCTO
-    monto,                                     // F MONTO $
-    montoUS,                                   // G MONTO US$
-    cajaLbl,                                   // H CAJA
-    p.referencia || ''                         // I REFERENCIA (opcional → venta de BALANCE)
+    p.user || '',                                          // A: quién lo cargó
+    parseFechaApp(p.fecha),                                // B FECHA
+    p.detalle || (p.tipo === 'cobro' ? 'Cobro' : 'Gasto'),  // C DETALLE
+    p.contacto || '',                                       // D SUBDETALLE
+    '',                                                     // E PRODUCTO
+    monto,                                                  // F MONTO $
+    montoUS,                                                // G MONTO US$
+    cajaLbl,                                                // H CAJA
+    p.referencia || ''                                      // I REFERENCIA (opcional → BALANCE)
   ]]);
   return { ok: true };
 }
