@@ -75,6 +75,7 @@ function getData() {
     ops:                getRecentOps(20),
     stockUbicacion:     getStockUbicacion(),
     ventasPendientes:   getVentasPendientes(),
+    comprasPendientes:  getComprasPendientes(),
     clientes:           getClientes(),
     ultimoControlStock: getUltimoControlStock(),
     resumenCajas:       getResumenCajas()
@@ -290,7 +291,7 @@ function getVentasPendientes() {
   var out = [];
   for (var i = 0; i < data.length; i++) {
     var r = data[i];
-    if (r[1] !== 'Venta') continue;      // C DETALLE
+    if (r[1] !== 'Venta' || !r[10]) continue; // C DETALLE, L REFERENCIA (sin referencia no se puede vincular)
     var saldoArs = r[13];                // O SALDO $
     if (!saldoArs) continue;
     out.push({
@@ -299,6 +300,34 @@ function getVentasPendientes() {
       producto:   r[3],                  // E
       saldoArs:   Math.round(saldoArs),
       saldoUsd:   Math.round(r[14] || 0) // P
+    });
+  }
+  return out;
+}
+
+// Compras/costos (Tapones, Flete, Elaboracion, Uva, etc.) con saldo pendiente de
+// pago — mismo mecanismo que getVentasPendientes, pero del lado "Egreso" en vez de
+// "Ingreso". CONCEPTO ya distingue esto automáticamente para cualquier fila de
+// BALANCE (no sólo Ventas), así que no hace falta listar categorías a mano.
+function getComprasPendientes() {
+  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  if (!balance) return [];
+  var lastRow = balance.getLastRow();
+  if (lastRow < 3) return [];
+  var data = balance.getRange(3, 2, lastRow - 2, 15).getValues(); // B..P
+  var out = [];
+  for (var i = 0; i < data.length; i++) {
+    var r = data[i];
+    if (r[12] !== 'Egreso' || !r[10]) continue; // N CONCEPTO, L REFERENCIA
+    var saldoArs = r[13];                       // O SALDO $
+    if (!saldoArs) continue;
+    out.push({
+      referencia: r[10],                        // L
+      detalle:    r[1],                         // C
+      proveedor:  r[2] || '',                   // D SUBDETALLE
+      producto:   r[3],                         // E
+      saldoArs:   Math.round(saldoArs),
+      saldoUsd:   Math.round(r[14] || 0)        // P
     });
   }
   return out;

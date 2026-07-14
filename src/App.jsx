@@ -135,6 +135,7 @@ function useAppData() {
   const [source, setSource] = useState('loading');
   const [stockUbicacion, setStockUbicacion] = useState(null); // { 'Malbec 2021': {'R Peña':0,...}, ... } | null
   const [ventasPendientes, setVentasPendientes] = useState([]); // [{referencia,cliente,producto,saldoArs,saldoUsd}]
+  const [comprasPendientes, setComprasPendientes] = useState([]); // [{referencia,detalle,proveedor,producto,saldoArs,saldoUsd}]
   const [clientes, setClientes] = useState([]); // [{nombre,canal,activo}] — real, desde la pestaña CLIENTES
   const [ultimoControlStock, setUltimoControlStock] = useState(undefined); // undefined=sin cargar aún; null=cargó y no hay control; objeto=hay control
   const [resumenCajas, setResumenCajas] = useState([]); // [{caja,ars,usd,crypto}] — real, desde el cuadro CAJAS al pie de CAJA
@@ -154,6 +155,7 @@ function useAppData() {
         if (d.ops) setOps(d.ops); // confiamos en la respuesta del backend siempre, incluso si viene vacía
         if (d.stockUbicacion) setStockUbicacion(d.stockUbicacion);
         if (d.ventasPendientes) setVentasPendientes(d.ventasPendientes);
+        if (d.comprasPendientes) setComprasPendientes(d.comprasPendientes);
         if (d.clientes?.length) setClientes(d.clientes);
         setUltimoControlStock(d.ultimoControlStock ?? null);
         if (d.resumenCajas) setResumenCajas(d.resumenCajas);
@@ -169,7 +171,7 @@ function useAppData() {
     try { localStorage.setItem('ops', JSON.stringify(next)); } catch {}
   };
 
-  return { price, source, ops, addOp, refresh, stockUbicacion, ventasPendientes, clientes, ultimoControlStock, resumenCajas };
+  return { price, source, ops, addOp, refresh, stockUbicacion, ventasPendientes, comprasPendientes, clientes, ultimoControlStock, resumenCajas };
 }
 
 function useStockControl(backendControl) {
@@ -579,7 +581,7 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
 }
 
 // ── CAJA ─────────────────────────────────────────────────────────────────
-function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,refresh,resumenCajas}){
+function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,comprasPendientes,refresh,resumenCajas}){
   const hoy=new Date().toISOString().split('T')[0];
   const [f,setF]=useState({tipo:'cobro',monto:'',moneda:'ARS',caja:'Empresa (Ludico)',concepto:'',fecha:hoy,referencia:''});
   const [sending,setSending]=useState(false);
@@ -625,7 +627,7 @@ function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,refresh,resume
       )}
       <div style={{display:'flex',marginBottom:20,border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
         {[{k:'cobro',l:'↓ Cobro / Ingreso',bg:C.greenBg,col:'#7dce9b'},{k:'gasto',l:'↑ Gasto / Egreso',bg:C.wineBg,col:'#f08080'}].map((t,i)=>(
-          <button key={t.k} onClick={()=>set('tipo',t.k)} style={{flex:1,padding:'12px 8px',background:f.tipo===t.k?t.bg:C.barrel,color:f.tipo===t.k?t.col:C.dim,border:'none',borderRight:i===0?`1px solid ${C.border}`:'none',cursor:'pointer',fontSize:13,fontFamily:'system-ui',fontWeight:f.tipo===t.k?700:400}}>{t.l}</button>
+          <button key={t.k} onClick={()=>{set('tipo',t.k);set('referencia','');}} style={{flex:1,padding:'12px 8px',background:f.tipo===t.k?t.bg:C.barrel,color:f.tipo===t.k?t.col:C.dim,border:'none',borderRight:i===0?`1px solid ${C.border}`:'none',cursor:'pointer',fontSize:13,fontFamily:'system-ui',fontWeight:f.tipo===t.k?700:400}}>{t.l}</button>
         ))}
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
@@ -640,6 +642,14 @@ function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,refresh,resume
             <Sel value={f.referencia} onChange={e=>set('referencia',e.target.value)}>
               <option value="">Sin vincular</option>
               {ventasPendientes.map(v=><option key={v.referencia} value={v.referencia}>{v.referencia} — {v.cliente} · debe ${v.saldoArs.toLocaleString('es-AR')}</option>)}
+            </Sel>
+          </F>
+        )}
+        {f.tipo==='gasto'&&comprasPendientes?.length>0&&(
+          <F label="Vincular a compra pendiente (opcional)">
+            <Sel value={f.referencia} onChange={e=>set('referencia',e.target.value)}>
+              <option value="">Sin vincular</option>
+              {comprasPendientes.map(c=><option key={c.referencia} value={c.referencia}>{c.referencia} — {c.detalle}{c.proveedor?` (${c.proveedor})`:''} · debe ${c.saldoArs.toLocaleString('es-AR')}</option>)}
             </Sel>
           </F>
         )}
@@ -703,7 +713,7 @@ function Nav({screen,setScreen}){
 // ── APP ───────────────────────────────────────────────────────────────────
 export default function NovatoApp(){
   const [user,setUser]=useState(null);const [screen,setScreen]=useState('dashboard');const [toast,setToast]=useState(null);const [settings,setSettings]=useState(false);
-  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,clientes,ultimoControlStock,resumenCajas,refresh}=useAppData();
+  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,comprasPendientes,clientes,ultimoControlStock,resumenCajas,refresh}=useAppData();
   const {productos,applyTransfer,applySale}=useProductos(stockUbicacion);
   const {last,save}=useStockControl(ultimoControlStock);
   const showToast=(msg,type='ok')=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
@@ -720,7 +730,7 @@ export default function NovatoApp(){
       <div style={{paddingBottom:80}}>
         {screen==='dashboard'&&<DashboardScreen onNavigate={setScreen} price={price} source={source} ops={ops} productos={productos} last={last}/>}
         {screen==='venta'&&<VentaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} price={price} productos={productos} applySale={applySale} clientes={clientes} refresh={refresh}/>}
-        {screen==='caja'&&<CajaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes} refresh={refresh} resumenCajas={resumenCajas}/>}
+        {screen==='caja'&&<CajaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes} comprasPendientes={comprasPendientes} refresh={refresh} resumenCajas={resumenCajas}/>}
         {screen==='stock'&&<StockScreen onBack={()=>setScreen('dashboard')} showToast={showToast} productos={productos} applyTransfer={applyTransfer} user={user} refresh={refresh} last={last} save={save}/>}
         {screen==='consultas'&&<ConsultasScreen price={price} productos={productos}/>}
       </div>
