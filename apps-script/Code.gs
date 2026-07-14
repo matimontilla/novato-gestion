@@ -7,7 +7,7 @@
 
 // Rango "ancho" para que las fórmulas de reconciliación (BALANCE ↔ CAJA)
 // sigan funcionando a medida que se agreguen filas nuevas con el tiempo.
-var CAJA_RANGO_FIN = 5000;
+// (Ya no hace falta un límite de fila fijo — ver nota en escribirFormulasBalance)
 
 // Historial de transferencias entre depósitos (NO es la fuente de verdad
 // del stock — eso vive directo en STOCK. Esto es sólo un log de auditoría).
@@ -179,8 +179,8 @@ function escribirFormulasBalance(row) {
   balance.getRange(row, 10).setValue('=G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)');              // J CU $
   balance.getRange(row, 11).setValue('=H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)');              // K CU US$
   balance.getRange(row, 14).setValue('=IF(G' + row + '>0;"Ingreso";(IF(G' + row + '=0;"Movimiento";"Egreso")))'); // N CONCEPTO
-  balance.getRange(row, 15).setValue('=G' + row + '-SUMIF(CAJA!$I$3:$I$' + CAJA_RANGO_FIN + ';L' + row + ';CAJA!$F$3:$F$' + CAJA_RANGO_FIN + ')'); // O SALDO $
-  balance.getRange(row, 16).setValue('=-(H' + row + '-SUMIF(CAJA!$I$3:$I$' + CAJA_RANGO_FIN + ';L' + row + ';CAJA!$G$3:$G$' + CAJA_RANGO_FIN + '))'); // P SALDO US$
+  balance.getRange(row, 15).setValue('=G' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$F$3:$F)');        // O SALDO $ (rango abierto: nunca queda corto)
+  balance.getRange(row, 16).setValue('=-(H' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$G$3:$G))');     // P SALDO US$
   balance.getRange(row, 17).setValue('=IF(N' + row + '="Egreso";-P' + row + '/H' + row + ';P' + row + '/H' + row + ')');   // Q % DIF POR TC
   balance.getRange(row, 18).setValue('=IF(BALANCE!$B' + row + '="";"";YEAR(BALANCE!$B' + row + '))');             // R AÑO
 }
@@ -402,51 +402,51 @@ function getRecentOps(n) {
 }
 
 // ── UTILIDAD OPCIONAL — correr UNA VEZ a mano si querés ────────────────
-// Ensancha el límite de fila (511 → 5000) que usan las fórmulas de reconciliación
-// existentes en BALANCE (columnas O y P) para mirar de vuelta a CAJA. Sin esto,
-// un cobro cargado hoy contra una venta VIEJA (anterior a la app) no se reflejaría
-// en el saldo de esa venta vieja, porque su fórmula sólo mira CAJA hasta la fila 511
-// (y CAJA ya tiene 524 filas reales). No toca ninguna otra cosa.
+// Sin esto, un cobro cargado hoy contra una venta VIEJA (anterior a la app, con la
+// fórmula original de rango fijo) no se reflejaría en su saldo, ni una venta vieja
+// se restaría del STOCK agregado. Correr una sola vez arregla las filas existentes;
+// las filas nuevas (vía addSale) ya nacen con rango abierto, así que no vuelve a hacer falta.
+// Convierte los rangos de fila fija (ej. $I$3:$I$511) en rangos abiertos ($I$3:$I),
+// tanto en BALANCE (columnas O, P que miran a CAJA) como en STOCK (EGRESOS que mira
+// a BALANCE). Un rango abierto llega hasta la última fila de la hoja automáticamente,
+// así que esto es un arreglo DEFINITIVO — no hace falta volver a correrlo nunca.
 function ampliarRangosReconciliacion() {
+  var patronCierre = /(:\$[A-Za-z]+)\$\d+/g; // busca ":$COL$NUM" y deja sólo ":$COL"
+
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   var lastRow = balance.getLastRow();
   var cambiosBalance = 0;
   if (lastRow >= 3) {
-    var range     = balance.getRange(3, 15, lastRow - 2, 2); // O:P
-    var formulas  = range.getFormulas();
-    var patronFin = /\$511\b/g;
+    var range    = balance.getRange(3, 15, lastRow - 2, 2); // O:P
+    var formulas = range.getFormulas();
     for (var i = 0; i < formulas.length; i++) {
       for (var j = 0; j < formulas[i].length; j++) {
-        if (formulas[i][j] && patronFin.test(formulas[i][j])) {
-          formulas[i][j] = formulas[i][j].replace(patronFin, '$' + CAJA_RANGO_FIN);
+        if (formulas[i][j] && patronCierre.test(formulas[i][j])) {
+          formulas[i][j] = formulas[i][j].replace(patronCierre, '$1');
           cambiosBalance++;
         }
-        patronFin.lastIndex = 0;
+        patronCierre.lastIndex = 0;
       }
     }
     range.setFormulas(formulas);
   }
 
-  // La tabla agregada de STOCK suma BOTELLAS de BALANCE con un rango también fijo
-  // (históricamente hasta la fila 369) — sin esto, ventas cargadas después de esa
-  // fila no se reflejan en el STOCK agregado (aunque sí en el detalle por depósito).
   var stock = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('STOCK');
   var cambiosStock = 0;
   if (stock) {
     var rangeStock    = stock.getRange(4, 6, 6, 1); // F4:F9 = EGRESOS
     var formulasStock = rangeStock.getFormulas();
-    var patronStock   = /\$369\b/g;
     for (var k = 0; k < formulasStock.length; k++) {
-      if (formulasStock[k][0] && patronStock.test(formulasStock[k][0])) {
-        formulasStock[k][0] = formulasStock[k][0].replace(patronStock, '$' + CAJA_RANGO_FIN);
+      if (formulasStock[k][0] && patronCierre.test(formulasStock[k][0])) {
+        formulasStock[k][0] = formulasStock[k][0].replace(patronCierre, '$1');
         cambiosStock++;
       }
-      patronStock.lastIndex = 0;
+      patronCierre.lastIndex = 0;
     }
     rangeStock.setFormulas(formulasStock);
   }
 
-  Logger.log('Listo — ' + cambiosBalance + ' fórmulas de BALANCE y ' + cambiosStock + ' de STOCK ampliadas a fila ' + CAJA_RANGO_FIN + '.');
+  Logger.log('Listo — ' + cambiosBalance + ' fórmulas de BALANCE y ' + cambiosStock + ' de STOCK ahora usan rango abierto (sin límite de fila).');
 }
 
 // ── REPARAR FILAS DE BALANCE ──────────────────────────────────────────
