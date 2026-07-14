@@ -76,6 +76,7 @@ function getData() {
     stockUbicacion:     getStockUbicacion(),
     ventasPendientes:   getVentasPendientes(),
     comprasPendientes:  getComprasPendientes(),
+    operacionesPendientes: getOperacionesPendientes(),
     clientes:           getClientes(),
     ultimoControlStock: getUltimoControlStock(),
     resumenCajas:       getResumenCajas(),
@@ -357,6 +358,7 @@ function getVentasPendientes() {
       referencia: r[10],                 // L
       cliente:    r[2],                  // D
       producto:   r[3],                  // E
+      fecha:      r[0],                  // B
       saldoArs:   Math.round(saldoArs),
       saldoUsd:   Math.round(r[14] || 0) // P
     });
@@ -385,11 +387,30 @@ function getComprasPendientes() {
       detalle:    r[1],                         // C
       proveedor:  r[2] || '',                   // D SUBDETALLE
       producto:   r[3],                         // E
+      fecha:      r[0],                         // B
       saldoArs:   Math.round(saldoArs),
       saldoUsd:   Math.round(r[14] || 0)        // P
     });
   }
   return out;
+}
+
+// Ventas por cobrar + compras por pagar en una sola lista, para el dashboard.
+// Ordenadas de más antigua a más nueva (lo más viejo pendiente primero).
+function getOperacionesPendientes() {
+  var ventas   = getVentasPendientes().map(function(v) {
+    return { tipo:'venta', referencia:v.referencia, contraparte:v.cliente, detalle:'Venta', producto:v.producto, fecha:v.fecha, saldoArs:v.saldoArs, saldoUsd:v.saldoUsd };
+  });
+  var compras  = getComprasPendientes().map(function(c) {
+    return { tipo:'compra', referencia:c.referencia, contraparte:c.proveedor, detalle:c.detalle, producto:c.producto, fecha:c.fecha, saldoArs:c.saldoArs, saldoUsd:c.saldoUsd };
+  });
+  var todas = ventas.concat(compras);
+  todas.sort(function(a, b) {
+    var ta = a.fecha instanceof Date ? a.fecha.getTime() : 0;
+    var tb = b.fecha instanceof Date ? b.fecha.getTime() : 0;
+    return ta - tb;
+  });
+  return todas;
 }
 
 // ── MOVIMIENTOS DE CAJA → CAJA ────────────────────────────────────────

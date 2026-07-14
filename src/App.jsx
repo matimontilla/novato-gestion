@@ -134,6 +134,7 @@ function useAppData() {
   const [source, setSource] = useState('loading');
   const [stockUbicacion, setStockUbicacion] = useState(null); // { 'Malbec 2021': {'R Peña':0,...}, ... } | null
   const [ventasPendientes, setVentasPendientes] = useState([]); // [{referencia,cliente,producto,saldoArs,saldoUsd}]
+  const [operacionesPendientes, setOperacionesPendientes] = useState([]); // ventas por cobrar + compras por pagar, combinadas
   const [comprasPendientes, setComprasPendientes] = useState([]); // [{referencia,detalle,proveedor,producto,saldoArs,saldoUsd}]
   const [clientes, setClientes] = useState([]); // [{nombre,canal,activo}] — real, desde la pestaña CLIENTES
   const [categorias, setCategorias] = useState([]); // [{detalle,tipo,total}] — categorías reales de BALANCE (Venta, Retiros, Muestra, Tapones, etc.)
@@ -156,6 +157,7 @@ function useAppData() {
         if (d.ops) setOps(d.ops); // confiamos en la respuesta del backend siempre, incluso si viene vacía
         if (d.stockUbicacion) setStockUbicacion(d.stockUbicacion);
         if (d.ventasPendientes) setVentasPendientes(d.ventasPendientes);
+        if (d.operacionesPendientes) setOperacionesPendientes(d.operacionesPendientes);
         if (d.comprasPendientes) setComprasPendientes(d.comprasPendientes);
         if (d.clientes?.length) setClientes(d.clientes);
         if (d.categorias?.length) setCategorias(d.categorias);
@@ -174,7 +176,7 @@ function useAppData() {
     try { localStorage.setItem('ops', JSON.stringify(next)); } catch {}
   };
 
-  return { price, source, ops, addOp, refresh, stockUbicacion, ventasPendientes, comprasPendientes, clientes, categorias, contactosBalance, ultimoControlStock, resumenCajas };
+  return { price, source, ops, addOp, refresh, stockUbicacion, ventasPendientes, comprasPendientes, operacionesPendientes, clientes, categorias, contactosBalance, ultimoControlStock, resumenCajas };
 }
 
 function useStockControl(backendControl) {
@@ -416,7 +418,7 @@ function TransferForm({productos,applyTransfer,user,showToast,onBack,refresh}){
 }
 
 // ── DASHBOARD ────────────────────────────────────────────────────────────
-function DashboardScreen({onNavigate,price,source,ops,productos,last}){
+function DashboardScreen({onNavigate,price,source,productos,last,operacionesPendientes}){
   const {tc,err:tcErr,date:tcDate}=useDolarBlue();
   const total=productos.reduce((s,p)=>s+totalStock(p),0);
   const productosOrdenados=[...productos].sort((a,b)=>totalStock(b)-totalStock(a)); // mayor a menor, los de 0 quedan al final
@@ -498,16 +500,26 @@ function DashboardScreen({onNavigate,price,source,ops,productos,last}){
           <div style={{borderTop:`1px solid ${C.border}`,paddingTop:8,fontSize:12,color:C.green,fontFamily:'system-ui'}}>✓ Stock coincide con lo teórico</div>
         )}
       </div>
-      <SL>Últimas operaciones</SL>
+      <SL>Operaciones pendientes</SL>
       <div style={{display:'flex',flexDirection:'column',gap:8}}>
-        {ops.slice(0,4).map((op,i)=>(
-          <div key={op.id||i} style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:12,padding:'12px 14px',display:'flex',alignItems:'center',gap:12}}>
-            <span style={{fontSize:22,flexShrink:0}}>{op.icon}</span>
-            <div style={{flex:1,minWidth:0}}><div style={{color:C.text,fontSize:13,fontFamily:'system-ui',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{op.desc}</div><div style={{color:C.dim,fontSize:11,fontFamily:'system-ui',marginTop:2}}>{op.fecha} · {op.user}</div></div>
-            <div style={{color:C.muted,fontSize:12,fontFamily:'system-ui',flexShrink:0,textAlign:'right'}}>{op.monto}</div>
-          </div>
-        ))}
-        {ops.length===0&&<div style={{color:C.dim,fontSize:13,fontFamily:'system-ui',textAlign:'center',padding:'20px 0'}}>Sin operaciones registradas</div>}
+        {operacionesPendientes.slice(0,8).map((op,i)=>{
+          const dias=op.fecha?Math.floor((Date.now()-new Date(op.fecha).getTime())/86400000):null;
+          const esVenta=op.tipo==='venta';
+          return (
+            <div key={op.referencia+'-'+i} style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:12,padding:'12px 14px',display:'flex',alignItems:'center',gap:12}}>
+              <span style={{fontSize:22,flexShrink:0}}>{esVenta?'🍾':'📋'}</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{color:C.text,fontSize:13,fontFamily:'system-ui',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{op.contraparte||'(sin nombre)'}{op.producto?` · ${op.producto}`:''}</div>
+                <div style={{color:C.dim,fontSize:11,fontFamily:'system-ui',marginTop:2}}>{op.detalle}{dias!==null?` · hace ${dias} día${dias===1?'':'s'}`:''}</div>
+              </div>
+              <div style={{fontSize:13,fontFamily:'system-ui',flexShrink:0,textAlign:'right',fontWeight:700,color:esVenta?'#7dce9b':'#f08080'}}>
+                {esVenta?'+':'-'}${Math.abs(op.saldoArs).toLocaleString('es-AR')}
+              </div>
+            </div>
+          );
+        })}
+        {operacionesPendientes.length===0&&<div style={{color:C.dim,fontSize:13,fontFamily:'system-ui',textAlign:'center',padding:'20px 0'}}>Sin operaciones pendientes</div>}
+        {operacionesPendientes.length>8&&<div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',textAlign:'center',padding:'4px 0'}}>+{operacionesPendientes.length-8} más</div>}
       </div>
     </div>
   );
@@ -737,7 +749,7 @@ function Nav({screen,setScreen}){
 // ── APP ───────────────────────────────────────────────────────────────────
 export default function NovatoApp(){
   const [user,setUser]=useState(null);const [screen,setScreen]=useState('dashboard');const [toast,setToast]=useState(null);const [settings,setSettings]=useState(false);
-  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,comprasPendientes,clientes,categorias,contactosBalance,ultimoControlStock,resumenCajas,refresh}=useAppData();
+  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,comprasPendientes,operacionesPendientes,clientes,categorias,contactosBalance,ultimoControlStock,resumenCajas,refresh}=useAppData();
   const {productos,applyTransfer,applySale}=useProductos(stockUbicacion);
   const {last,save}=useStockControl(ultimoControlStock);
   const showToast=(msg,type='ok')=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
@@ -752,7 +764,7 @@ export default function NovatoApp(){
         <button onClick={()=>setSettings(true)} style={{display:'flex',alignItems:'center',gap:7,background:C.cork,border:`1px solid ${C.border}`,borderRadius:20,padding:'6px 13px',color:C.muted,fontSize:12,fontFamily:'system-ui',cursor:'pointer'}}><span>{user.emoji}</span><span>{user.nombre}</span><span style={{color:C.dim,fontSize:10}}>⚙</span></button>
       </div>
       <div style={{paddingBottom:80}}>
-        {screen==='dashboard'&&<DashboardScreen onNavigate={setScreen} price={price} source={source} ops={ops} productos={productos} last={last}/>}
+        {screen==='dashboard'&&<DashboardScreen onNavigate={setScreen} price={price} source={source} productos={productos} last={last} operacionesPendientes={operacionesPendientes}/>}
         {screen==='venta'&&<VentaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} price={price} productos={productos} applySale={applySale} clientes={clientes} categorias={categorias} contactosBalance={contactosBalance} refresh={refresh}/>}
         {screen==='caja'&&<CajaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes} comprasPendientes={comprasPendientes} refresh={refresh} resumenCajas={resumenCajas}/>}
         {screen==='stock'&&<StockScreen onBack={()=>setScreen('dashboard')} showToast={showToast} productos={productos} applyTransfer={applyTransfer} user={user} refresh={refresh} last={last} save={save}/>}
