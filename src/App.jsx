@@ -19,17 +19,89 @@ const USUARIOS = [
   { id:'lucas',  nombre:'Lucas',  emoji:'⛷️', rol:'Socio' },
   { id:'santi',  nombre:'Santi',  emoji:'🏠', rol:'Socio' },
 ];
-const PRODUCTOS = [
-  { id:'mb21', label:'Malbec 2021',     stock:66,   max:2964, hex:'#6B2030' },
-  { id:'mb22', label:'Malbec 2022',     stock:3138, max:3818, hex:'#9B2335' },
-  { id:'mb23', label:'Malbec 2023',     stock:3960, max:3960, hex:'#C04050' },
-  { id:'cf21', label:'Cab. Franc 2021', stock:0,    max:972,  hex:'#4A1528' },
-  { id:'cf22', label:'Cab. Franc 2022', stock:1158, max:2834, hex:'#7B2040' },
-  { id:'ch22', label:'Chardonnay 2022', stock:0,    max:2208, hex:'#C4A84F' },
+// Depósitos entre los que se puede mover stock sin que medie una venta
+const UBICACIONES = ['R Peña','Pipi','Lucas','Santi','Mati'];
+const vacio = () => Object.fromEntries(UBICACIONES.map(u=>[u,0]));
+
+// Stock inicial por producto y depósito (según último conteo en General_Dinamico → hoja STOCK)
+const PRODUCTOS_SEED = [
+  { id:'mb21', label:'Malbec 2021',     max:2964, hex:'#6B2030', stockUbic:{...vacio()} },
+  { id:'mb22', label:'Malbec 2022',     max:3818, hex:'#9B2335', stockUbic:{...vacio(),'R Peña':2964,'Pipi':30,'Lucas':15} },
+  { id:'mb23', label:'Malbec 2023',     max:3960, hex:'#C04050', stockUbic:{...vacio(),'R Peña':3960} },
+  { id:'cf21', label:'Cab. Franc 2021', max:972,  hex:'#4A1528', stockUbic:{...vacio()} },
+  { id:'cf22', label:'Cab. Franc 2022', max:2834, hex:'#7B2040', stockUbic:{...vacio(),'R Peña':894,'Pipi':18,'Lucas':15} },
+  { id:'ch22', label:'Chardonnay 2022', max:2208, hex:'#C4A84F', stockUbic:{...vacio()} },
 ];
-const CLIENTES = ['Angela San Rafael','Bahia Blanca','Carlos De Aquín','Adriana Laos','Chacho Andia','Mosto Divino','Organyca','Particular','Rosario','Santiago MDQ','Nuevo cliente…'];
+const totalStock = p => UBICACIONES.reduce((s,u)=>s+(p.stockUbic[u]||0),0);
+
+// Maneja el stock por producto/depósito, persistido localmente y (si hay backend) enviado a Sheets
+function useProductos(backendStock) {
+  const [productos, setProductos] = useState(() => {
+    try {
+      const raw = localStorage.getItem('productos_stock');
+      if (raw) {
+        const saved = JSON.parse(raw);
+        return PRODUCTOS_SEED.map(p => ({ ...p, stockUbic: { ...p.stockUbic, ...(saved[p.id]||{}) } }));
+      }
+    } catch {}
+    return PRODUCTOS_SEED;
+  });
+
+  const persist = (list) => {
+    try {
+      const toSave = Object.fromEntries(list.map(p => [p.id, p.stockUbic]));
+      localStorage.setItem('productos_stock', JSON.stringify(toSave));
+    } catch {}
+  };
+
+  // Cuando llega el estado real desde Sheets (APP_STOCK_UBICACION), pasa a ser la fuente de verdad,
+  // así todos los socios ven lo mismo en vez de quedarse con lo último guardado en este celular.
+  useEffect(() => {
+    if (!backendStock) return;
+    setProductos(prev => {
+      const next = prev.map(p => {
+        const fromSheet = backendStock[p.label];
+        return fromSheet ? { ...p, stockUbic: { ...vacio(), ...fromSheet } } : p;
+      });
+      persist(next);
+      return next;
+    });
+  }, [backendStock]);
+
+  // Mueve botellas de un depósito a otro para un producto, sin generar una venta
+  const applyTransfer = ({ productoId, desde, hacia, cantidad }) => {
+    setProductos(prev => {
+      const next = prev.map(p => {
+        if (p.id !== productoId) return p;
+        const stockUbic = { ...p.stockUbic };
+        stockUbic[desde] = (stockUbic[desde]||0) - cantidad;
+        stockUbic[hacia] = (stockUbic[hacia]||0) + cantidad;
+        return { ...p, stockUbic };
+      });
+      persist(next);
+      return next;
+    });
+  };
+
+  // Descuenta botellas de un depósito por una venta (no van a ningún otro lado, salen de la bodega)
+  const applySale = ({ productoId, deposito, cantidad }) => {
+    setProductos(prev => {
+      const next = prev.map(p => {
+        if (p.id !== productoId) return p;
+        const stockUbic = { ...p.stockUbic };
+        stockUbic[deposito] = (stockUbic[deposito]||0) - cantidad;
+        return { ...p, stockUbic };
+      });
+      persist(next);
+      return next;
+    });
+  };
+
+  return { productos, applyTransfer, applySale };
+}
+const CLIENTES_FALLBACK = ['Angela San Rafael','Bahia Blanca','Carlos De Aquín','Adriana Laos','Chacho Andia','Mosto Divino','Organyca','Particular','Rosario','Santiago MDQ'];
 const CAJAS    = ['Empresa (Ludico)','Mati','Lucas','Pipi (Andrés)','Santi'];
-const CANALES  = ['Vinoteca','Distribuidor','Venta directa','Exportación','Muestra','Otro'];
+const CANALES  = ['Vinoteca','Distribuidor','Restaurant','Directo','Exportación','Otro'];
 
 const SEED_OPS = [
   { id:1, icon:'🍾', desc:'42 bot Malbec 2022 → Organyca',     monto:'$336.000 ARS', fecha:'04/03/2026', user:'Mati' },
@@ -61,6 +133,9 @@ function useAppData() {
   const [price,  setPrice]  = useState(null);
   const [ops,    setOps]    = useState(SEED_OPS);
   const [source, setSource] = useState('loading');
+  const [stockUbicacion, setStockUbicacion] = useState(null); // { 'Malbec 2021': {'R Peña':0,...}, ... } | null
+  const [ventasPendientes, setVentasPendientes] = useState([]); // [{referencia,cliente,producto,saldoArs,saldoUsd}]
+  const [clientes, setClientes] = useState([]); // [{nombre,canal,activo}] — real, desde la pestaña CLIENTES
 
   const refresh = async () => {
     if (!GAS_URL) {
@@ -75,6 +150,9 @@ function useAppData() {
         if (d.lastPrice) { setPrice(d.lastPrice); setSource('sheets'); }
         else             { setPrice(8000);         setSource('fallback'); }
         if (d.ops?.length) setOps(d.ops);
+        if (d.stockUbicacion) setStockUbicacion(d.stockUbicacion);
+        if (d.ventasPendientes) setVentasPendientes(d.ventasPendientes);
+        if (d.clientes?.length) setClientes(d.clientes);
       }
     } catch { setPrice(8000); setSource('fallback'); }
   };
@@ -87,7 +165,7 @@ function useAppData() {
     try { localStorage.setItem('ops', JSON.stringify(next)); } catch {}
   };
 
-  return { price, source, ops, addOp, refresh };
+  return { price, source, ops, addOp, refresh, stockUbicacion, ventasPendientes, clientes };
 }
 
 function useStockControl() {
@@ -101,11 +179,14 @@ async function getPin(uid){try{return localStorage.getItem(`pin_${uid}`)||'1234'
 async function savePin(uid,pin){try{localStorage.setItem(`pin_${uid}`,pin);return true;}catch{return false;}}
 
 // ── CONTEXTO IA ──────────────────────────────────────────────────────────
-function buildCtx(tc, price) {
-  const total=PRODUCTOS.reduce((s,p)=>s+p.stock,0);
+function buildCtx(tc, price, productos) {
+  const total=productos.reduce((s,p)=>s+totalStock(p),0);
   const ars=price?total*price:null; const usd=ars&&tc?Math.round(ars/tc):null;
+  const stockLine=productos.map(p=>`${p.label}:${totalStock(p)||'agotado'}`).join(' | ');
+  const ubicLine=productos.filter(p=>totalStock(p)>0).map(p=>`${p.label} [${UBICACIONES.filter(u=>p.stockUbic[u]>0).map(u=>`${u}:${p.stockUbic[u]}`).join(', ')}]`).join(' | ');
   return `Sos el asistente de Novato, bodega boutique de Mendoza. Datos al ${new Date().toLocaleDateString('es-AR')}.
-STOCK: Malbec 2021:66 | Malbec 2022:3138 | Malbec 2023:3960 (sin ventas) | CF 2021:agotado | CF 2022:1158 | Chardonnay 2022:agotado. Total:${total} bot. Precio ref.:$${price||'N/A'}/bot. Valorización:${ars?'ARS $'+ars.toLocaleString('es-AR'):'—'}${usd?' ≈ USD '+usd.toLocaleString('es-AR'):''}.  TC blue:${tc?'$'+tc.toLocaleString('es-AR')+'/USD':'N/A'}.
+STOCK: ${stockLine}. Total:${total} bot. Precio ref.:$${price||'N/A'}/bot. Valorización:${ars?'ARS $'+ars.toLocaleString('es-AR'):'—'}${usd?' ≈ USD '+usd.toLocaleString('es-AR'):''}.  TC blue:${tc?'$'+tc.toLocaleString('es-AR')+'/USD':'N/A'}.
+STOCK POR DEPÓSITO: ${ubicLine||'sin datos'}.
 CLIENTES ACTIVOS: Organyca (última 04/03/2026, en cierre). INACTIVOS: Angela San Rafael, Carlos De Aquín, Bahia Blanca, Rosario, Gahvino (perdido 2023, distribuidor BA), Mercadito Chacras (vinoteca, 23 op, inactivo desde 2023).
 FINANZAS: Cajas socios ~$0 ARS | Empresa ≈ USD 275. CONTEXTO: 4 socios, sin clientes activos, relanzamiento comercial en enero con vuelta de Mati. Uva Valle de Uco, elaboración Otero Ramos.
 Respondé directo y útil. Abreviaciones: $, ARS, USD, bot, op.`;
@@ -184,13 +265,33 @@ function SettingsPanel({user,onClose,onLogout,showToast}){
   </>);
 }
 
-// ── STOCK CONTROL ────────────────────────────────────────────────────────
-function StockControlScreen({onBack,showToast,onSaved}){
+// ── STOCK (control físico + transferencias entre depósitos) ────────────────
+function StockScreen({onBack,showToast,onSaved,productos,applyTransfer,user}){
+  const [view,setView]=useState('control'); // 'control' | 'transfer'
+  return(
+    <div style={{padding:'20px 16px',maxWidth:500,margin:'0 auto'}}>
+      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
+        <button onClick={onBack} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:8,padding:'8px 12px',color:C.muted,cursor:'pointer',fontSize:16}}>←</button>
+        <div><div style={{color:C.text,fontWeight:700,fontSize:18,fontFamily:'Georgia, serif'}}>Stock</div><div style={{color:C.dim,fontSize:12,fontFamily:'system-ui'}}>Control físico y movimientos entre depósitos</div></div>
+      </div>
+      <div style={{display:'flex',marginBottom:20,border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
+        {[{k:'control',l:'Control físico'},{k:'transfer',l:'Mover entre depósitos'}].map((t,i)=>(
+          <button key={t.k} onClick={()=>setView(t.k)} style={{flex:1,padding:'12px 8px',background:view===t.k?C.cork:C.barrel,color:view===t.k?C.gold:C.dim,border:'none',borderRight:i===0?`1px solid ${C.border}`:'none',cursor:'pointer',fontSize:13,fontFamily:'system-ui',fontWeight:view===t.k?700:400}}>{t.l}</button>
+        ))}
+      </div>
+      {view==='control'
+        ? <StockControlBody productos={productos} showToast={showToast} onSaved={onSaved} onBack={onBack}/>
+        : <TransferForm productos={productos} applyTransfer={applyTransfer} user={user} showToast={showToast} onBack={onBack}/>}
+    </div>
+  );
+}
+
+function StockControlBody({productos,showToast,onSaved,onBack}){
   const {last,save}=useStockControl();
-  const [real,setReal]=useState(Object.fromEntries(PRODUCTOS.map(p=>[p.id,''])));
+  const [real,setReal]=useState(Object.fromEntries(productos.map(p=>[p.id,''])));
   const set=(id,v)=>setReal(p=>({...p,[id]:v.replace(/\D/g,'')}));
-  const diffs=PRODUCTOS.map(p=>{const r=real[p.id]===''?null:parseInt(real[p.id]);return{...p,real:r,diff:r!==null?r-p.stock:null};}).filter(p=>p.real!==null);
-  const hasDiff=diffs.some(d=>d.diff!==0);const allFilled=PRODUCTOS.every(p=>real[p.id]!=='');
+  const diffs=productos.map(p=>{const r=real[p.id]===''?null:parseInt(real[p.id]);return{...p,stock:totalStock(p),real:r,diff:r!==null?r-totalStock(p):null};}).filter(p=>p.real!==null);
+  const hasDiff=diffs.some(d=>d.diff!==0);const allFilled=productos.every(p=>real[p.id]!=='');
   const confirm=async()=>{
     const ctrl={fecha:new Date().toLocaleDateString('es-AR'),hora:new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}),items:diffs};
     await save(ctrl);onSaved();
@@ -198,25 +299,21 @@ function StockControlScreen({onBack,showToast,onSaved}){
     else{showToast('✓ Stock coincide con lo teórico','ok');}
     onBack();
   };
-  return(
-    <div style={{padding:'20px 16px',maxWidth:500,margin:'0 auto'}}>
-      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:8}}>
-        <button onClick={onBack} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:8,padding:'8px 12px',color:C.muted,cursor:'pointer',fontSize:16}}>←</button>
-        <div><div style={{color:C.text,fontWeight:700,fontSize:18,fontFamily:'Georgia, serif'}}>Control de stock real</div><div style={{color:C.dim,fontSize:12,fontFamily:'system-ui'}}>Ingresá el conteo físico en depósito</div></div>
-      </div>
-      {last&&<div style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:10,padding:'10px 14px',fontFamily:'system-ui',fontSize:12,color:C.muted,marginBottom:16,marginTop:8}}>Último control: <strong style={{color:C.text}}>{last.fecha} a las {last.hora}</strong></div>}
-      <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:20,marginTop:last?0:16}}>
+  return(<>
+      {last&&<div style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:10,padding:'10px 14px',fontFamily:'system-ui',fontSize:12,color:C.muted,marginBottom:16}}>Último control: <strong style={{color:C.text}}>{last.fecha} a las {last.hora}</strong></div>}
+      <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:20}}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 80px 80px 80px',gap:8,padding:'0 4px'}}>
           {['Producto','Teórico','Real','Dif.'].map(h=><div key={h} style={{fontSize:10,color:C.dim,letterSpacing:'0.1em',textTransform:'uppercase',fontFamily:'system-ui',textAlign:h!=='Producto'?'center':'left'}}>{h}</div>)}
         </div>
-        {PRODUCTOS.map(p=>{
+        {productos.map(p=>{
+          const stock=totalStock(p);
           const r=real[p.id]===''?null:parseInt(real[p.id]);
-          const diff=r!==null?r-p.stock:null;
+          const diff=r!==null?r-stock:null;
           const dc=diff===null?C.dim:diff<0?'#f08080':diff>0?'#7dce9b':C.muted;
           return(
             <div key={p.id} style={{background:C.barrel,border:`1px solid ${diff!==null&&diff!==0?dc+'44':C.border}`,borderRadius:12,padding:'12px 14px',display:'grid',gridTemplateColumns:'1fr 80px 80px 80px',gap:8,alignItems:'center'}}>
               <div><div style={{color:C.text,fontSize:14,fontFamily:'system-ui',fontWeight:600}}>{p.label}</div><div style={{width:40,height:3,background:p.hex,borderRadius:2,marginTop:4}}/></div>
-              <div style={{textAlign:'center',color:C.muted,fontSize:15,fontFamily:'system-ui'}}>{p.stock}</div>
+              <div style={{textAlign:'center',color:C.muted,fontSize:15,fontFamily:'system-ui'}}>{stock}</div>
               <input type="number" min="0" placeholder="—" value={real[p.id]} onChange={e=>set(p.id,e.target.value)} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:8,padding:'8px',color:C.text,fontSize:15,fontFamily:'system-ui',outline:'none',width:'100%',boxSizing:'border-box',textAlign:'center'}}/>
               <div style={{textAlign:'center',fontWeight:700,fontSize:15,fontFamily:'system-ui',color:dc}}>{diff===null?'—':diff===0?'✓':diff>0?`+${diff}`:diff}</div>
             </div>
@@ -231,19 +328,56 @@ function StockControlScreen({onBack,showToast,onSaved}){
               <span>{d.label}</span><span style={{color:d.diff<0?'#f08080':'#7dce9b',fontWeight:700}}>{d.diff>0?'+':''}{d.diff} bot</span>
             </div>
           ))}
-          <div style={{color:'#A06070',fontSize:12,marginTop:4,lineHeight:1.5}}>Causas posibles: retiros sin avisar, cobro en especie del depósito, movimientos sin cargar.</div>
+          <div style={{color:'#A06070',fontSize:12,marginTop:4,lineHeight:1.5}}>Causas posibles: retiros sin avisar, cobro en especie del depósito, movimientos entre depósitos sin cargar (usá la pestaña "Mover entre depósitos").</div>
         </div>
       )}
       <Btn onClick={confirm} style={{width:'100%',opacity:allFilled?1:0.5}} disabled={!allFilled}>{allFilled?'Confirmar control de stock':'Completá todos los campos'}</Btn>
+  </>);
+}
+
+// ── TRANSFERENCIA ENTRE DEPÓSITOS ───────────────────────────────────────
+function TransferForm({productos,applyTransfer,user,showToast,onBack}){
+  const hoy=new Date().toISOString().split('T')[0];
+  const [f,setF]=useState({producto:'',cantidad:'',desde:'',hacia:'',fecha:hoy,notas:''});
+  const [sending,setSending]=useState(false);
+  const set=(k,v)=>setF(p=>({...p,[k]:v}));
+  const prod=productos.find(p=>p.id===f.producto);
+  const disponible=prod&&f.desde?(prod.stockUbic[f.desde]||0):null;
+  const submit=async()=>{
+    const cant=parseInt(f.cantidad||0);
+    if(!f.producto||!cant||!f.desde||!f.hacia){showToast('Completá los campos obligatorios','error');return;}
+    if(f.desde===f.hacia){showToast('Origen y destino no pueden ser el mismo depósito','error');return;}
+    if(disponible!==null&&cant>disponible){showToast(`Sólo hay ${disponible} bot en ${f.desde}`,'error');return;}
+    setSending(true);
+    try{
+      applyTransfer({productoId:f.producto,desde:f.desde,hacia:f.hacia,cantidad:cant});
+      if(GAS_URL) await gasGet({action:'addTransfer',fecha:f.fecha,producto:prod?.label,cantidad:cant,desde:f.desde,hacia:f.hacia,notas:f.notas||'',user:user.nombre});
+      showToast(`✓ ${cant} bot de ${prod?.label}: ${f.desde} → ${f.hacia}${GAS_URL?' (enviado a Sheets)':''}`,'ok');
+      onBack();
+    }catch(e){ showToast('Error al registrar el movimiento.','error'); }
+    setSending(false);
+  };
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      <F label="Producto *"><Sel value={f.producto} onChange={e=>set('producto',e.target.value)}><option value="">Seleccionar…</option>{productos.map(p=><option key={p.id} value={p.id}>{p.label} — {totalStock(p)} bot</option>)}</Sel></F>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+        <F label="Desde *"><Sel value={f.desde} onChange={e=>set('desde',e.target.value)}><option value="">Seleccionar…</option>{UBICACIONES.map(u=><option key={u} value={u}>{u}{prod?` (${prod.stockUbic[u]||0})`:''}</option>)}</Sel></F>
+        <F label="Hacia *"><Sel value={f.hacia} onChange={e=>set('hacia',e.target.value)}><option value="">Seleccionar…</option>{UBICACIONES.filter(u=>u!==f.desde).map(u=><option key={u} value={u}>{u}</option>)}</Sel></F>
+      </div>
+      <F label="Cantidad (botellas) *"><Inp type="number" min="1" max={disponible||undefined} placeholder="0" value={f.cantidad} onChange={e=>set('cantidad',e.target.value)}/></F>
+      {disponible!==null&&<div style={{fontSize:12,color:C.dim,fontFamily:'system-ui'}}>Disponible en {f.desde}: {disponible} bot</div>}
+      <F label="Fecha"><Inp type="date" value={f.fecha} onChange={e=>set('fecha',e.target.value)}/></F>
+      <F label="Notas"><Inp placeholder="Motivo del movimiento (opcional)" value={f.notas} onChange={e=>set('notas',e.target.value)}/></F>
+      <div style={{display:'flex',gap:10}}><Btn variant="ghost" onClick={onBack} style={{flex:1}}>Cancelar</Btn><Btn onClick={submit} style={{flex:2,opacity:sending?0.6:1}} disabled={sending}>{sending?'Registrando…':'Registrar movimiento'}</Btn></div>
     </div>
   );
 }
 
 // ── DASHBOARD ────────────────────────────────────────────────────────────
-function DashboardScreen({onNavigate,price,source,ops}){
+function DashboardScreen({onNavigate,price,source,ops,productos}){
   const {tc,err:tcErr,date:tcDate}=useDolarBlue();
   const {last}=useStockControl();
-  const total=PRODUCTOS.reduce((s,p)=>s+p.stock,0);
+  const total=productos.reduce((s,p)=>s+totalStock(p),0);
   const ars=price?total*price:null; const usd=ars&&tc?Math.round(ars/tc):null;
   const daysSince=last?(()=>{try{const [d,m,y]=last.fecha.split('/');return Math.floor((Date.now()-new Date(`${y}-${m}-${d}`).getTime())/86400000);}catch{return null;}})():null;
   return(
@@ -264,9 +398,25 @@ function DashboardScreen({onNavigate,price,source,ops}){
       <SL>Stock por producto</SL>
       <Card style={{marginBottom:14}}>
         <div style={{display:'flex',gap:8,alignItems:'flex-end',height:110,marginBottom:10}}>
-          {PRODUCTOS.map(p=>{const pct=p.max>0?p.stock/p.max:0;const h=Math.max(Math.round(pct*90),p.stock>0?4:2);return(<div key={p.id} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:4}}><div style={{fontSize:9,color:p.stock>0?C.muted:C.dim,fontFamily:'system-ui',minHeight:13}}>{p.stock>0?p.stock.toLocaleString('es-AR'):''}</div><div style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}><div style={{width:'35%',height:13,background:C.cork,borderRadius:'3px 3px 0 0',border:`1px solid ${C.border}`,borderBottom:'none'}}/><div style={{width:'100%',height:80,background:C.cork,borderRadius:'2px 2px 6px 6px',border:`1px solid ${C.border}`,overflow:'hidden',display:'flex',alignItems:'flex-end'}}><div style={{width:'100%',height:`${h}px`,background:p.stock>0?p.hex:C.cork,transition:'height 0.8s cubic-bezier(.4,0,.2,1)'}}/></div></div></div>);})}
+          {productos.map(p=>{const stock=totalStock(p);const pct=p.max>0?stock/p.max:0;const h=Math.max(Math.round(pct*90),stock>0?4:2);return(<div key={p.id} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:4}}><div style={{fontSize:9,color:stock>0?C.muted:C.dim,fontFamily:'system-ui',minHeight:13}}>{stock>0?stock.toLocaleString('es-AR'):''}</div><div style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}><div style={{width:'35%',height:13,background:C.cork,borderRadius:'3px 3px 0 0',border:`1px solid ${C.border}`,borderBottom:'none'}}/><div style={{width:'100%',height:80,background:C.cork,borderRadius:'2px 2px 6px 6px',border:`1px solid ${C.border}`,overflow:'hidden',display:'flex',alignItems:'flex-end'}}><div style={{width:'100%',height:`${h}px`,background:stock>0?p.hex:C.cork,transition:'height 0.8s cubic-bezier(.4,0,.2,1)'}}/></div></div></div>);})}
         </div>
-        <div style={{display:'flex',gap:8}}>{PRODUCTOS.map(p=><div key={p.id} style={{flex:1,textAlign:'center'}}><div style={{fontSize:8,color:p.stock>0?C.muted:C.dim,fontFamily:'system-ui',lineHeight:1.3}}>{p.label.split(' ').map((w,i)=><span key={i}>{w}<br/></span>)}</div></div>)}</div>
+        <div style={{display:'flex',gap:8}}>{productos.map(p=><div key={p.id} style={{flex:1,textAlign:'center'}}><div style={{fontSize:8,color:totalStock(p)>0?C.muted:C.dim,fontFamily:'system-ui',lineHeight:1.3}}>{p.label.split(' ').map((w,i)=><span key={i}>{w}<br/></span>)}</div></div>)}</div>
+      </Card>
+      <SL>Stock por depósito</SL>
+      <Card style={{marginBottom:14}}>
+        <div style={{display:'flex',flexDirection:'column',gap:10}}>
+          {productos.filter(p=>totalStock(p)>0).map(p=>(
+            <div key={p.id}>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:5}}><div style={{width:8,height:8,borderRadius:2,background:p.hex,flexShrink:0}}/><span style={{color:C.text,fontSize:12,fontFamily:'system-ui',fontWeight:600}}>{p.label}</span></div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:6,paddingLeft:14}}>
+                {UBICACIONES.filter(u=>(p.stockUbic[u]||0)>0).map(u=>(
+                  <div key={u} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:8,padding:'3px 9px',fontSize:11,fontFamily:'system-ui',color:C.muted}}>{u} <strong style={{color:C.text}}>{p.stockUbic[u]}</strong></div>
+                ))}
+              </div>
+            </div>
+          ))}
+          {productos.every(p=>totalStock(p)===0)&&<div style={{color:C.dim,fontSize:13,fontFamily:'system-ui',textAlign:'center',padding:'8px 0'}}>Sin stock disponible</div>}
+        </div>
       </Card>
       {/* Card control de stock */}
       <div style={{background:daysSince===null||daysSince>30?C.wineBg:C.barrel,border:`1px solid ${daysSince===null||daysSince>30?C.wine+'44':C.border}`,borderRadius:14,padding:'14px 16px',marginBottom:18}}>
@@ -322,22 +472,35 @@ function DashboardScreen({onNavigate,price,source,ops}){
 }
 
 // ── NUEVA VENTA ──────────────────────────────────────────────────────────
-function VentaScreen({user,onBack,showToast,addOp,price}){
+function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clientes}){
   const hoy=new Date().toISOString().split('T')[0];
-  const [f,setF]=useState({producto:'',botellas:'',cliente:'',clienteNuevo:'',canal:'',monto:'',moneda:'ARS',fecha:hoy,notas:''});
+  const [f,setF]=useState({producto:'',botellas:'',cliente:'',clienteNuevo:'',canal:'',monto:'',moneda:'ARS',fecha:hoy,notas:'',deposito:''});
   const [sending,setSending]=useState(false);
   const set=(k,v)=>setF(p=>({...p,[k]:v}));
-  const prod=PRODUCTOS.find(p=>p.id===f.producto);
+  const prod=productos.find(p=>p.id===f.producto);
+  const listaClientes = clientes?.length ? clientes.map(c=>c.nombre) : CLIENTES_FALLBACK;
+  const clienteInfo = clientes?.find(c=>c.nombre===f.cliente);
+  const setCliente = (nombre) => {
+    setF(p=>({...p, cliente:nombre, canal: clientes?.find(c=>c.nombre===nombre)?.canal || p.canal }));
+  };
   const sug=price&&f.botellas?price*parseInt(f.botellas||0):null;
+  const disponibleEnDeposito=prod&&f.deposito?(prod.stockUbic[f.deposito]||0):null;
   const submit=async()=>{
-    if(!f.producto||!f.botellas||!f.cliente||(f.cliente==='Nuevo cliente…'&&!f.clienteNuevo)){showToast('Completá los campos obligatorios','error');return;}
+    if(!f.producto||!f.botellas||!f.cliente||!f.deposito||(f.cliente==='Nuevo cliente…'&&!f.clienteNuevo)){showToast('Completá los campos obligatorios','error');return;}
+    const cant=parseInt(f.botellas);
+    if(disponibleEnDeposito!==null&&cant>disponibleEnDeposito){showToast(`Sólo hay ${disponibleEnDeposito} bot en ${f.deposito}`,'error');return;}
     const cl=f.cliente==='Nuevo cliente…'?f.clienteNuevo:f.cliente;
     setSending(true);
     try {
-      if(GAS_URL) await gasGet({action:'addSale',fecha:f.fecha,producto:prod?.label,botellas:f.botellas,monto:f.monto||0,moneda:f.moneda,cliente:cl,canal:f.canal||'',notas:f.notas||'',user:user.nombre});
+      let referencia='';
+      if(GAS_URL){
+        const r=await gasGet({action:'addSale',fecha:f.fecha,producto:prod?.label,botellas:f.botellas,monto:f.monto||0,moneda:f.moneda,cliente:cl,canal:f.canal||'',notas:f.notas||'',deposito:f.deposito,user:user.nombre});
+        referencia=r?.referencia||'';
+      }
+      applySale({productoId:f.producto,deposito:f.deposito,cantidad:cant});
       const montoStr=f.monto?`$${parseInt(f.monto).toLocaleString('es-AR')} ${f.moneda}`:'sin monto';
       await addOp({id:Date.now(),icon:'🍾',desc:`${f.botellas} bot ${prod?.label} → ${cl}`,monto:montoStr,fecha:new Date(f.fecha+'T12:00').toLocaleDateString('es-AR'),user:user.nombre});
-      showToast(`✓ Venta registrada${GAS_URL?' y enviada a Sheets':''}`,'ok');
+      showToast(`✓ Venta registrada en BALANCE${referencia?' ('+referencia+')':''}`,'ok');
       onBack();
     } catch(e){ showToast('Error al registrar. Intentá de nuevo.','error'); }
     setSending(false);
@@ -349,17 +512,25 @@ function VentaScreen({user,onBack,showToast,addOp,price}){
         <div><div style={{color:C.text,fontWeight:700,fontSize:18,fontFamily:'Georgia, serif'}}>Nueva venta</div><div style={{color:C.dim,fontSize:12,fontFamily:'system-ui'}}>Registrar movimiento de stock</div></div>
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:16}}>
-        <F label="Producto *"><Sel value={f.producto} onChange={e=>set('producto',e.target.value)}><option value="">Seleccionar…</option>{PRODUCTOS.filter(p=>p.stock>0).map(p=><option key={p.id} value={p.id}>{p.label} — {p.stock.toLocaleString('es-AR')} bot</option>)}</Sel></F>
+        <F label="Producto *"><Sel value={f.producto} onChange={e=>set('producto',e.target.value)}><option value="">Seleccionar…</option>{productos.filter(p=>totalStock(p)>0).map(p=><option key={p.id} value={p.id}>{p.label} — {totalStock(p).toLocaleString('es-AR')} bot</option>)}</Sel></F>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-          <F label="Botellas *"><Inp type="number" min="1" max={prod?.stock} placeholder="0" value={f.botellas} onChange={e=>set('botellas',e.target.value)}/></F>
-          <F label="Fecha"><Inp type="date" value={f.fecha} onChange={e=>set('fecha',e.target.value)}/></F>
+          <F label="Depósito de origen *"><Sel value={f.deposito} onChange={e=>set('deposito',e.target.value)}><option value="">Seleccionar…</option>{UBICACIONES.filter(u=>!prod||(prod.stockUbic[u]||0)>0).map(u=><option key={u} value={u}>{u}{prod?` (${prod.stockUbic[u]||0})`:''}</option>)}</Sel></F>
+          <F label="Botellas *"><Inp type="number" min="1" max={disponibleEnDeposito||(prod?totalStock(prod):undefined)} placeholder="0" value={f.botellas} onChange={e=>set('botellas',e.target.value)}/></F>
         </div>
+        <F label="Fecha"><Inp type="date" value={f.fecha} onChange={e=>set('fecha',e.target.value)}/></F>
         {sug&&<div style={{background:C.greenBg,border:`1px solid ${C.green}55`,borderRadius:10,padding:'10px 14px',fontFamily:'system-ui',fontSize:13}}><span style={{color:C.muted}}>Monto sugerido: </span><strong style={{color:'#7dce9b'}}>${sug.toLocaleString('es-AR')}</strong><span style={{color:C.dim}}> (${price.toLocaleString('es-AR')}/bot · última venta)</span></div>}
         <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:12}}>
           <F label="Monto total *"><Inp type="number" placeholder="0" value={f.monto} onChange={e=>set('monto',e.target.value)}/></F>
           <F label="Moneda"><Sel value={f.moneda} onChange={e=>set('moneda',e.target.value)}><option value="ARS">ARS $</option><option value="USD">USD $</option></Sel></F>
         </div>
-        <F label="Cliente *"><Sel value={f.cliente} onChange={e=>set('cliente',e.target.value)}><option value="">Seleccionar…</option>{CLIENTES.map(c=><option key={c} value={c}>{c}</option>)}</Sel></F>
+        <F label="Cliente *">
+          <Sel value={f.cliente} onChange={e=>setCliente(e.target.value)}>
+            <option value="">Seleccionar…</option>
+            {listaClientes.map(c=><option key={c} value={c}>{c}</option>)}
+            <option value="Nuevo cliente…">Nuevo cliente…</option>
+          </Sel>
+        </F>
+        {clienteInfo&&!clienteInfo.activo&&<div style={{background:C.wineBg,border:`1px solid ${C.wine}55`,borderRadius:10,padding:'8px 14px',fontFamily:'system-ui',fontSize:12,color:'#E07080'}}>⚠ {f.cliente} figura inactivo — última operación hace tiempo</div>}
         {f.cliente==='Nuevo cliente…'&&<F label="Nombre nuevo cliente"><Inp placeholder="Nombre o comercio" value={f.clienteNuevo} onChange={e=>set('clienteNuevo',e.target.value)}/></F>}
         <F label="Canal"><Sel value={f.canal} onChange={e=>set('canal',e.target.value)}><option value="">Seleccionar…</option>{CANALES.map(c=><option key={c} value={c}>{c}</option>)}</Sel></F>
         <F label="Notas"><Inp placeholder="Referencia, condiciones de pago, etc." value={f.notas} onChange={e=>set('notas',e.target.value)}/></F>
@@ -370,19 +541,19 @@ function VentaScreen({user,onBack,showToast,addOp,price}){
 }
 
 // ── CAJA ─────────────────────────────────────────────────────────────────
-function CajaScreen({user,onBack,showToast,addOp}){
+function CajaScreen({user,onBack,showToast,addOp,ventasPendientes}){
   const hoy=new Date().toISOString().split('T')[0];
-  const [f,setF]=useState({tipo:'cobro',monto:'',moneda:'ARS',caja:'Empresa (Ludico)',concepto:'',fecha:hoy});
+  const [f,setF]=useState({tipo:'cobro',monto:'',moneda:'ARS',caja:'Empresa (Ludico)',concepto:'',fecha:hoy,referencia:''});
   const [sending,setSending]=useState(false);
   const set=(k,v)=>setF(p=>({...p,[k]:v}));
   const submit=async()=>{
     if(!f.monto||!f.concepto){showToast('Completá los campos obligatorios','error');return;}
     setSending(true);
     try {
-      if(GAS_URL) await gasGet({action:'addMovement',fecha:f.fecha,tipo:f.tipo,monto:f.monto,moneda:f.moneda,caja:f.caja,concepto:f.concepto,user:user.nombre});
+      if(GAS_URL) await gasGet({action:'addMovement',fecha:f.fecha,tipo:f.tipo,monto:f.monto,moneda:f.moneda,caja:f.caja,concepto:f.concepto,referencia:f.referencia||'',user:user.nombre});
       const icon=f.tipo==='cobro'?'💵':'💸';
       await addOp({id:Date.now(),icon,desc:`${f.tipo==='cobro'?'Cobro':'Gasto'}: ${f.concepto}`,monto:`${f.moneda} ${parseInt(f.monto).toLocaleString('es-AR')}`,fecha:new Date(f.fecha+'T12:00').toLocaleDateString('es-AR'),user:user.nombre});
-      showToast(`✓ Movimiento registrado${GAS_URL?' y enviado a Sheets':''}`,'ok');
+      showToast(`✓ Movimiento registrado${GAS_URL?' en CAJA':''}`,'ok');
       onBack();
     } catch(e){ showToast('Error al registrar. Intentá de nuevo.','error'); }
     setSending(false);
@@ -405,6 +576,14 @@ function CajaScreen({user,onBack,showToast,addOp}){
         </div>
         <F label={f.tipo==='cobro'?'Caja que recibe':'Caja de la que sale'}><Sel value={f.caja} onChange={e=>set('caja',e.target.value)}>{CAJAS.map(c=><option key={c} value={c}>{c}</option>)}</Sel></F>
         <F label="Concepto *"><Inp placeholder={f.tipo==='cobro'?'Ej: Cobro factura Organyca':'Ej: Pago etiquetas'} value={f.concepto} onChange={e=>set('concepto',e.target.value)}/></F>
+        {f.tipo==='cobro'&&ventasPendientes?.length>0&&(
+          <F label="Vincular a venta pendiente (opcional)">
+            <Sel value={f.referencia} onChange={e=>set('referencia',e.target.value)}>
+              <option value="">Sin vincular</option>
+              {ventasPendientes.map(v=><option key={v.referencia} value={v.referencia}>{v.referencia} — {v.cliente} · debe ${v.saldoArs.toLocaleString('es-AR')}</option>)}
+            </Sel>
+          </F>
+        )}
         <F label="Fecha"><Inp type="date" value={f.fecha} onChange={e=>set('fecha',e.target.value)}/></F>
         <div style={{display:'flex',gap:10}}><Btn variant="ghost" onClick={onBack} style={{flex:1}}>Cancelar</Btn><Btn onClick={submit} style={{flex:2,opacity:sending?0.6:1}} disabled={sending}>{sending?'Registrando…':'Registrar movimiento'}</Btn></div>
       </div>
@@ -413,7 +592,7 @@ function CajaScreen({user,onBack,showToast,addOp}){
 }
 
 // ── CONSULTAS IA ─────────────────────────────────────────────────────────
-function ConsultasScreen({price}){
+function ConsultasScreen({price,productos}){
   const {tc}=useDolarBlue();
   const [msgs,setMsgs]=useState([{role:'assistant',content:'Hola 👋 Soy el asistente de Novato. Preguntame sobre stock, clientes, caja o cualquier dato de la bodega.'}]);
   const [input,setInput]=useState('');const [loading,setL]=useState(false);const ref=useRef(null);
@@ -426,7 +605,7 @@ function ConsultasScreen({price}){
       const res=await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
         headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-        body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1000,system:buildCtx(tc,price),messages:next.slice(1)})
+        body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1000,system:buildCtx(tc,price,productos),messages:next.slice(1)})
       });
       const d=await res.json();
       if(d?.content?.[0]?.text){
@@ -465,7 +644,8 @@ function Nav({screen,setScreen}){
 // ── APP ───────────────────────────────────────────────────────────────────
 export default function NovatoApp(){
   const [user,setUser]=useState(null);const [screen,setScreen]=useState('dashboard');const [toast,setToast]=useState(null);const [settings,setSettings]=useState(false);const [ctrlKey,setCtrlKey]=useState(0);
-  const {price,source,ops,addOp}=useAppData();
+  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,clientes}=useAppData();
+  const {productos,applyTransfer,applySale}=useProductos(stockUbicacion);
   const showToast=(msg,type='ok')=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
   const logout=()=>{setUser(null);setSettings(false);setScreen('dashboard');};
   if(!user)return <LoginScreen onLogin={u=>{setUser(u);setScreen('dashboard');}}/>;
@@ -478,11 +658,11 @@ export default function NovatoApp(){
         <button onClick={()=>setSettings(true)} style={{display:'flex',alignItems:'center',gap:7,background:C.cork,border:`1px solid ${C.border}`,borderRadius:20,padding:'6px 13px',color:C.muted,fontSize:12,fontFamily:'system-ui',cursor:'pointer'}}><span>{user.emoji}</span><span>{user.nombre}</span><span style={{color:C.dim,fontSize:10}}>⚙</span></button>
       </div>
       <div style={{paddingBottom:80}}>
-        {screen==='dashboard'&&<DashboardScreen onNavigate={setScreen} price={price} source={source} ops={ops}/>}
-        {screen==='venta'&&<VentaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} price={price}/>}
-        {screen==='caja'&&<CajaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp}/>}
-        {screen==='stock'&&<StockControlScreen onBack={()=>setScreen('dashboard')} showToast={showToast} onSaved={()=>setCtrlKey(k=>k+1)}/>}
-        {screen==='consultas'&&<ConsultasScreen price={price}/>}
+        {screen==='dashboard'&&<DashboardScreen onNavigate={setScreen} price={price} source={source} ops={ops} productos={productos}/>}
+        {screen==='venta'&&<VentaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} price={price} productos={productos} applySale={applySale} clientes={clientes}/>}
+        {screen==='caja'&&<CajaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes}/>}
+        {screen==='stock'&&<StockScreen onBack={()=>setScreen('dashboard')} showToast={showToast} onSaved={()=>setCtrlKey(k=>k+1)} productos={productos} applyTransfer={applyTransfer} user={user}/>}
+        {screen==='consultas'&&<ConsultasScreen price={price} productos={productos}/>}
       </div>
       <Nav screen={screen} setScreen={setScreen}/>
     </div>
