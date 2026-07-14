@@ -137,6 +137,7 @@ function useAppData() {
   const [ventasPendientes, setVentasPendientes] = useState([]); // [{referencia,cliente,producto,saldoArs,saldoUsd}]
   const [clientes, setClientes] = useState([]); // [{nombre,canal,activo}] — real, desde la pestaña CLIENTES
   const [ultimoControlStock, setUltimoControlStock] = useState(undefined); // undefined=sin cargar aún; null=cargó y no hay control; objeto=hay control
+  const [resumenCajas, setResumenCajas] = useState([]); // [{caja,ars,usd,crypto}] — real, desde el cuadro CAJAS al pie de CAJA
 
   const refresh = async () => {
     if (!GAS_URL) {
@@ -155,6 +156,7 @@ function useAppData() {
         if (d.ventasPendientes) setVentasPendientes(d.ventasPendientes);
         if (d.clientes?.length) setClientes(d.clientes);
         setUltimoControlStock(d.ultimoControlStock ?? null);
+        if (d.resumenCajas) setResumenCajas(d.resumenCajas);
       }
     } catch { setPrice(8000); setSource('fallback'); }
   };
@@ -167,7 +169,7 @@ function useAppData() {
     try { localStorage.setItem('ops', JSON.stringify(next)); } catch {}
   };
 
-  return { price, source, ops, addOp, refresh, stockUbicacion, ventasPendientes, clientes, ultimoControlStock };
+  return { price, source, ops, addOp, refresh, stockUbicacion, ventasPendientes, clientes, ultimoControlStock, resumenCajas };
 }
 
 function useStockControl(backendControl) {
@@ -575,7 +577,7 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
 }
 
 // ── CAJA ─────────────────────────────────────────────────────────────────
-function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,refresh}){
+function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,refresh,resumenCajas}){
   const hoy=new Date().toISOString().split('T')[0];
   const [f,setF]=useState({tipo:'cobro',monto:'',moneda:'ARS',caja:'Empresa (Ludico)',concepto:'',fecha:hoy,referencia:''});
   const [sending,setSending]=useState(false);
@@ -599,6 +601,28 @@ function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,refresh}){
         <button onClick={onBack} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:8,padding:'8px 12px',color:C.muted,cursor:'pointer',fontSize:16}}>←</button>
         <div><div style={{color:C.text,fontWeight:700,fontSize:18,fontFamily:'Georgia, serif'}}>Movimiento de caja</div><div style={{color:C.dim,fontSize:12,fontFamily:'system-ui'}}>Registrar cobro, pago o gasto</div></div>
       </div>
+      {resumenCajas?.length>0&&(
+        <Card style={{marginBottom:20}}>
+          <SL>Estado de cajas</SL>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 64px 64px 64px',gap:6,padding:'0 2px 6px'}}>
+            {['Caja','AR$','USD','CRYPTO'].map((h,i)=><div key={h} style={{fontSize:9,color:C.dim,letterSpacing:'0.08em',textTransform:'uppercase',fontFamily:'system-ui',textAlign:i===0?'left':'center'}}>{h}</div>)}
+          </div>
+          {resumenCajas.map(c=>(
+            <div key={c.caja} style={{display:'grid',gridTemplateColumns:'1fr 64px 64px 64px',gap:6,padding:'7px 2px',borderTop:`1px solid ${C.border}`,alignItems:'center'}}>
+              <span style={{color:C.text,fontSize:13,fontFamily:'system-ui',fontWeight:600}}>{c.caja}</span>
+              <span style={{textAlign:'center',color:C.muted,fontSize:12,fontFamily:'system-ui'}}>{c.ars?`$${Math.round(c.ars).toLocaleString('es-AR')}`:'—'}</span>
+              <span style={{textAlign:'center',color:C.muted,fontSize:12,fontFamily:'system-ui'}}>{c.usd?`$${Math.round(c.usd).toLocaleString('es-AR')}`:'—'}</span>
+              <span style={{textAlign:'center',color:C.muted,fontSize:12,fontFamily:'system-ui'}}>{c.crypto?c.crypto.toLocaleString('es-AR'):'—'}</span>
+            </div>
+          ))}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 64px 64px 64px',gap:6,padding:'8px 2px 0',borderTop:`2px solid ${C.border}`,marginTop:2}}>
+            <span style={{color:C.gold,fontSize:13,fontFamily:'system-ui',fontWeight:700}}>TOTAL</span>
+            <span style={{textAlign:'center',color:C.gold,fontSize:12,fontFamily:'system-ui',fontWeight:700}}>${Math.round(resumenCajas.reduce((s,c)=>s+c.ars,0)).toLocaleString('es-AR')}</span>
+            <span style={{textAlign:'center',color:C.gold,fontSize:12,fontFamily:'system-ui',fontWeight:700}}>${Math.round(resumenCajas.reduce((s,c)=>s+c.usd,0)).toLocaleString('es-AR')}</span>
+            <span style={{textAlign:'center',color:C.gold,fontSize:12,fontFamily:'system-ui',fontWeight:700}}>{resumenCajas.reduce((s,c)=>s+c.crypto,0).toLocaleString('es-AR')}</span>
+          </div>
+        </Card>
+      )}
       <div style={{display:'flex',marginBottom:20,border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
         {[{k:'cobro',l:'↓ Cobro / Ingreso',bg:C.greenBg,col:'#7dce9b'},{k:'gasto',l:'↑ Gasto / Egreso',bg:C.wineBg,col:'#f08080'}].map((t,i)=>(
           <button key={t.k} onClick={()=>set('tipo',t.k)} style={{flex:1,padding:'12px 8px',background:f.tipo===t.k?t.bg:C.barrel,color:f.tipo===t.k?t.col:C.dim,border:'none',borderRight:i===0?`1px solid ${C.border}`:'none',cursor:'pointer',fontSize:13,fontFamily:'system-ui',fontWeight:f.tipo===t.k?700:400}}>{t.l}</button>
@@ -679,7 +703,7 @@ function Nav({screen,setScreen}){
 // ── APP ───────────────────────────────────────────────────────────────────
 export default function NovatoApp(){
   const [user,setUser]=useState(null);const [screen,setScreen]=useState('dashboard');const [toast,setToast]=useState(null);const [settings,setSettings]=useState(false);
-  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,clientes,ultimoControlStock,refresh}=useAppData();
+  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,clientes,ultimoControlStock,resumenCajas,refresh}=useAppData();
   const {productos,applyTransfer,applySale}=useProductos(stockUbicacion);
   const {last,save}=useStockControl(ultimoControlStock);
   const showToast=(msg,type='ok')=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
@@ -696,7 +720,7 @@ export default function NovatoApp(){
       <div style={{paddingBottom:80}}>
         {screen==='dashboard'&&<DashboardScreen onNavigate={setScreen} price={price} source={source} ops={ops} productos={productos} last={last}/>}
         {screen==='venta'&&<VentaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} price={price} productos={productos} applySale={applySale} clientes={clientes} refresh={refresh}/>}
-        {screen==='caja'&&<CajaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes} refresh={refresh}/>}
+        {screen==='caja'&&<CajaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes} refresh={refresh} resumenCajas={resumenCajas}/>}
         {screen==='stock'&&<StockScreen onBack={()=>setScreen('dashboard')} showToast={showToast} productos={productos} applyTransfer={applyTransfer} user={user} refresh={refresh} last={last} save={save}/>}
         {screen==='consultas'&&<ConsultasScreen price={price} productos={productos}/>}
       </div>

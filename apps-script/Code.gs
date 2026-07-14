@@ -70,14 +70,48 @@ function doGet(e) {
 // ── GET DATA (carga inicial de la app) ──────────────────────────────
 function getData() {
   return {
-    ok:                true,
-    lastPrice:         getLastSalePrice(),
-    ops:               getRecentOps(20),
-    stockUbicacion:    getStockUbicacion(),
-    ventasPendientes:  getVentasPendientes(),
-    clientes:          getClientes(),
-    ultimoControlStock: getUltimoControlStock()
+    ok:                 true,
+    lastPrice:          getLastSalePrice(),
+    ops:                getRecentOps(20),
+    stockUbicacion:     getStockUbicacion(),
+    ventasPendientes:   getVentasPendientes(),
+    clientes:           getClientes(),
+    ultimoControlStock: getUltimoControlStock(),
+    resumenCajas:       getResumenCajas()
   };
+}
+
+// Lee el cuadro "CAJAS" (AR$ / USD / CRYPTO por caja) que ya existe al pie de la
+// tabla grande en la pestaña CAJA. Busca el bloque por texto ("CAJAS" ... "TOTAL:")
+// en vez de por número de fila fijo, para no romperse cuando se insertan filas
+// nuevas más arriba (adición de ventas/movimientos corre este bloque hacia abajo).
+function getResumenCajas() {
+  var caja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CAJA');
+  if (!caja) return [];
+  var lastRow = caja.getLastRow();
+  if (lastRow < 1) return [];
+  var data = caja.getRange(1, 2, lastRow, 4).getValues(); // B..E: caja, AR$, USD, CRYPTO
+
+  var inicio = -1;
+  for (var i = 0; i < data.length; i++) {
+    if (data[i][0] === 'CAJAS') { inicio = i; break; }
+  }
+  if (inicio === -1) return [];
+
+  var resultado = [];
+  for (var j = inicio + 1; j < data.length; j++) {
+    var nombre = data[j][0];
+    if (!nombre) continue;
+    if (nombre === 'TOTAL:') break;
+    if (nombre === 'AR$' || nombre === 'USD' || nombre === 'CRYPTO') continue; // fila de sub-encabezados
+    resultado.push({
+      caja:   nombre,
+      ars:    Number(data[j][1]) || 0,
+      usd:    Number(data[j][2]) || 0,
+      crypto: Number(data[j][3]) || 0
+    });
+  }
+  return resultado;
 }
 
 // Lista de clientes real (con canal y si está activo/inactivo), directo de la pestaña
