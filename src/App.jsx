@@ -505,12 +505,13 @@ function DashboardScreen({onNavigate,price,source,productos,last,operacionesPend
         {operacionesPendientes.slice(0,8).map((op,i)=>{
           const dias=op.fecha?Math.floor((Date.now()-new Date(op.fecha).getTime())/86400000):null;
           const esVenta=op.tipo==='venta';
+          const vencida=esVenta&&dias!==null&&dias>60;
           return (
-            <div key={op.referencia+'-'+i} style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:12,padding:'12px 14px',display:'flex',alignItems:'center',gap:12}}>
+            <div key={op.referencia+'-'+i} style={{background:C.barrel,border:`1px solid ${vencida?'#f0808088':C.border}`,borderRadius:12,padding:'12px 14px',display:'flex',alignItems:'center',gap:12}}>
               <span style={{fontSize:22,flexShrink:0}}>{esVenta?'🍾':'📋'}</span>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{color:C.text,fontSize:13,fontFamily:'system-ui',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{op.contraparte||'(sin nombre)'}{op.producto?` · ${op.producto}`:''}</div>
-                <div style={{color:C.dim,fontSize:11,fontFamily:'system-ui',marginTop:2}}>{op.detalle}{dias!==null?` · hace ${dias} día${dias===1?'':'s'}`:''}</div>
+                <div style={{color:vencida?'#f08080':C.dim,fontSize:11,fontFamily:'system-ui',marginTop:2,fontWeight:vencida?700:400}}>{vencida?'⚠ ':''}{op.detalle}{dias!==null?` · hace ${dias} día${dias===1?'':'s'}`:''}</div>
               </div>
               <div style={{fontSize:13,fontFamily:'system-ui',flexShrink:0,textAlign:'right',fontWeight:700,color:esVenta?'#7dce9b':'#f08080'}}>
                 {esVenta?'+':'-'}${Math.abs(op.saldoArs).toLocaleString('es-AR')}
