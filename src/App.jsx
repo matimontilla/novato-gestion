@@ -131,7 +131,7 @@ function useDolarBlue() {
 
 function useAppData() {
   const [price,  setPrice]  = useState(null);
-  const [ops,    setOps]    = useState(SEED_OPS);
+  const [ops,    setOps]    = useState(GAS_URL ? [] : SEED_OPS); // SEED_OPS es sólo un placeholder para modo offline sin GAS
   const [source, setSource] = useState('loading');
   const [stockUbicacion, setStockUbicacion] = useState(null); // { 'Malbec 2021': {'R Peña':0,...}, ... } | null
   const [ventasPendientes, setVentasPendientes] = useState([]); // [{referencia,cliente,producto,saldoArs,saldoUsd}]
@@ -149,7 +149,7 @@ function useAppData() {
       if (d?.ok) {
         if (d.lastPrice) { setPrice(d.lastPrice); setSource('sheets'); }
         else             { setPrice(8000);         setSource('fallback'); }
-        if (d.ops?.length) setOps(d.ops);
+        if (d.ops) setOps(d.ops); // confiamos en la respuesta del backend siempre, incluso si viene vacía
         if (d.stockUbicacion) setStockUbicacion(d.stockUbicacion);
         if (d.ventasPendientes) setVentasPendientes(d.ventasPendientes);
         if (d.clientes?.length) setClientes(d.clientes);
