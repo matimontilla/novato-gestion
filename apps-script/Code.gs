@@ -312,12 +312,12 @@ function addTransfer(p) {
 // p.items viene como JSON: [{label, stock, real, diff}, ...] — una fila por producto,
 // todas con el mismo REGISTRADO (timestamp) para poder agruparlas como una sesión.
 function addStockControl(p) {
-  var headers = ['FECHA','HORA','USUARIO','PRODUCTO','TEORICO','REAL','DIFERENCIA','REGISTRADO'];
+  var headers = ['FECHA','HORA','USUARIO','DEPOSITO','PRODUCTO','TEORICO','REAL','DIFERENCIA','REGISTRADO'];
   var sheet   = getOrCreateSheet(TAB_CONTROL, headers);
   var items   = JSON.parse(p.items || '[]');
   var ahora   = new Date();
   items.forEach(function(it) {
-    sheet.appendRow([p.fecha, p.hora, p.user, it.label, it.stock, it.real, it.diff, ahora]);
+    sheet.appendRow([p.fecha, p.hora, p.user, p.deposito || '', it.label, it.stock, it.real, it.diff, ahora]);
   });
   return { ok: true };
 }
@@ -327,24 +327,24 @@ function addStockControl(p) {
 function getUltimoControlStock() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TAB_CONTROL);
   if (!sheet || sheet.getLastRow() < 2) return null;
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).getValues();
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getValues();
 
   var maxTs = null;
   for (var i = 0; i < data.length; i++) {
-    var ts = data[i][7];
+    var ts = data[i][8];
     if (ts instanceof Date && (!maxTs || ts.getTime() > maxTs.getTime())) maxTs = ts;
   }
   if (!maxTs) return null;
 
-  var fecha = '', hora = '', items = [];
+  var fecha = '', hora = '', deposito = '', items = [];
   for (var j = 0; j < data.length; j++) {
     var row = data[j];
-    if (row[7] instanceof Date && row[7].getTime() === maxTs.getTime()) {
-      fecha = row[0]; hora = row[1];
-      items.push({ label: row[3], stock: row[4], real: row[5], diff: row[6] });
+    if (row[8] instanceof Date && row[8].getTime() === maxTs.getTime()) {
+      fecha = row[0]; hora = row[1]; deposito = row[3];
+      items.push({ label: row[4], stock: row[5], real: row[6], diff: row[7] });
     }
   }
-  return { fecha: fecha, hora: hora, items: items };
+  return { fecha: fecha, hora: hora, deposito: deposito, items: items };
 }
 
 // Lee el estado actual de stock por producto y depósito directo de STOCK
@@ -411,15 +411,15 @@ function getRecentOps(n) {
     var db = balance.getRange(3, 1, balance.getLastRow() - 2, 13).getValues(); // A..M
     for (var i = db.length - 1; i >= 0; i--) {
       var rb = db[i];
-      if (!rb[0] || rb[2] !== 'Venta') continue; // A usuario, C DETALLE
+      if (rb[2] !== 'Venta' || !(rb[1] instanceof Date)) continue; // C DETALLE, B FECHA (real, no una fila de totales/vacía)
       ops.push({
         id:    'b_' + i,
         icon:  '🍾',
         desc:  rb[12] + ' bot ' + rb[4] + ' → ' + rb[3], // M botellas, E producto, D cliente
         monto: '$' + Math.round(rb[6]).toLocaleString(), // G monto $
         fecha: formatDate(rb[1]),
-        user:  rb[0],
-        ts:    i
+        user:  rb[0] || '',
+        ts:    rb[1].getTime()
       });
     }
   }
@@ -437,7 +437,7 @@ function getRecentOps(n) {
         monto: (rc[5] < 0 ? '-' : '') + '$' + Math.abs(Math.round(rc[5])).toLocaleString() + ' (' + rc[7] + ')',
         fecha: formatDate(rc[1]),
         user:  rc[0],
-        ts:    j
+        ts:    rc[1] instanceof Date ? rc[1].getTime() : j
       });
     }
   }

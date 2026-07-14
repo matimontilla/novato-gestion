@@ -136,7 +136,7 @@ function useAppData() {
   const [stockUbicacion, setStockUbicacion] = useState(null); // { 'Malbec 2021': {'R Peña':0,...}, ... } | null
   const [ventasPendientes, setVentasPendientes] = useState([]); // [{referencia,cliente,producto,saldoArs,saldoUsd}]
   const [clientes, setClientes] = useState([]); // [{nombre,canal,activo}] — real, desde la pestaña CLIENTES
-  const [ultimoControlStock, setUltimoControlStock] = useState(null); // {fecha,hora,items:[...]} — real, compartido entre dispositivos
+  const [ultimoControlStock, setUltimoControlStock] = useState(undefined); // undefined=sin cargar aún; null=cargó y no hay control; objeto=hay control
 
   const refresh = async () => {
     if (!GAS_URL) {
@@ -154,7 +154,7 @@ function useAppData() {
         if (d.stockUbicacion) setStockUbicacion(d.stockUbicacion);
         if (d.ventasPendientes) setVentasPendientes(d.ventasPendientes);
         if (d.clientes?.length) setClientes(d.clientes);
-        if (d.ultimoControlStock) setUltimoControlStock(d.ultimoControlStock);
+        setUltimoControlStock(d.ultimoControlStock ?? null);
       }
     } catch { setPrice(8000); setSource('fallback'); }
   };
@@ -173,8 +173,14 @@ function useAppData() {
 function useStockControl(backendControl) {
   const [last,setLast]=useState(null);
   useEffect(()=>{
-    if (backendControl) { setLast(backendControl); return; }
-    try{const r=localStorage.getItem('stock_ctrl');if(r)setLast(JSON.parse(r));}catch{}
+    if (!GAS_URL) {
+      try{const r=localStorage.getItem('stock_ctrl');if(r)setLast(JSON.parse(r));}catch{}
+      return;
+    }
+    // Con GAS conectado, el backend manda siempre — incluso si todavía no hay
+    // ningún control cargado (backendControl===null), para no mostrar un control
+    // viejo guardado en este celular de antes de que el control físico se sincronizara.
+    if (backendControl !== undefined) setLast(backendControl);
   },[backendControl]);
   const save=async(ctrl)=>{ setLast(ctrl); try{localStorage.setItem('stock_ctrl',JSON.stringify(ctrl));}catch{}; };
   return {last,save};
@@ -292,35 +298,46 @@ function StockScreen({onBack,showToast,productos,applyTransfer,user,refresh,last
 }
 
 function StockControlBody({productos,showToast,onBack,last,save,user,refresh}){
+  const [deposito,setDeposito]=useState(UBICACIONES[0]);
   const [real,setReal]=useState(Object.fromEntries(productos.map(p=>[p.id,''])));
+  useEffect(()=>{ setReal(Object.fromEntries(productos.map(p=>[p.id,'']))); },[deposito]); // no arrastrar números de otro depósito
   const set=(id,v)=>setReal(p=>({...p,[id]:v.replace(/\D/g,'')}));
-  const diffs=productos.map(p=>{const r=real[p.id]===''?null:parseInt(real[p.id]);return{...p,stock:totalStock(p),real:r,diff:r!==null?r-totalStock(p):null};}).filter(p=>p.real!==null);
+  const diffs=productos.map(p=>{
+    const teorico=p.stockUbic[deposito]||0;
+    const r=real[p.id]===''?null:parseInt(real[p.id]);
+    return{...p,stock:teorico,real:r,diff:r!==null?r-teorico:null};
+  }).filter(p=>p.real!==null);
   const hasDiff=diffs.some(d=>d.diff!==0);const allFilled=productos.every(p=>real[p.id]!=='');
   const [sending,setSending]=useState(false);
   const confirm=async()=>{
-    const ctrl={fecha:new Date().toLocaleDateString('es-AR'),hora:new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}),items:diffs};
+    const ctrl={deposito,fecha:new Date().toLocaleDateString('es-AR'),hora:new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}),items:diffs};
     setSending(true);
     try{
       if(GAS_URL){
         const items=diffs.map(d=>({label:d.label,stock:d.stock,real:d.real,diff:d.diff}));
-        await gasGet({action:'addStockControl',fecha:ctrl.fecha,hora:ctrl.hora,items:JSON.stringify(items),user:user.nombre});
+        await gasGet({action:'addStockControl',deposito,fecha:ctrl.fecha,hora:ctrl.hora,items:JSON.stringify(items),user:user.nombre});
         await refresh();
       }
       await save(ctrl);
-      if(hasDiff){showToast(`⚠ Control guardado${GAS_URL?' en Sheets':''} — diferencias en ${diffs.filter(d=>d.diff!==0).length} producto(s)`,'error');}
-      else{showToast(`✓ Stock coincide con lo teórico${GAS_URL?' (guardado en Sheets)':''}`,'ok');}
+      if(hasDiff){showToast(`⚠ Control de ${deposito} guardado${GAS_URL?' en Sheets':''} — diferencias en ${diffs.filter(d=>d.diff!==0).length} producto(s)`,'error');}
+      else{showToast(`✓ ${deposito}: stock coincide con lo teórico${GAS_URL?' (guardado en Sheets)':''}`,'ok');}
       onBack();
     }catch(e){ showToast('Error al guardar el control. Intentá de nuevo.','error'); }
     setSending(false);
   };
   return(<>
-      {last&&<div style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:10,padding:'10px 14px',fontFamily:'system-ui',fontSize:12,color:C.muted,marginBottom:16}}>Último control: <strong style={{color:C.text}}>{last.fecha} a las {last.hora}</strong></div>}
-      <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:20}}>
+      <F label="Depósito a controlar *">
+        <Sel value={deposito} onChange={e=>setDeposito(e.target.value)}>
+          {UBICACIONES.map(u=><option key={u} value={u}>{u}</option>)}
+        </Sel>
+      </F>
+      {last&&<div style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:10,padding:'10px 14px',fontFamily:'system-ui',fontSize:12,color:C.muted,margin:'16px 0'}}>Último control: <strong style={{color:C.text}}>{last.deposito?`${last.deposito} · `:''}{last.fecha} a las {last.hora}</strong></div>}
+      <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:20,marginTop:last?0:16}}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 80px 80px 80px',gap:8,padding:'0 4px'}}>
           {['Producto','Teórico','Real','Dif.'].map(h=><div key={h} style={{fontSize:10,color:C.dim,letterSpacing:'0.1em',textTransform:'uppercase',fontFamily:'system-ui',textAlign:h!=='Producto'?'center':'left'}}>{h}</div>)}
         </div>
         {productos.map(p=>{
-          const stock=totalStock(p);
+          const stock=p.stockUbic[deposito]||0;
           const r=real[p.id]===''?null:parseInt(real[p.id]);
           const diff=r!==null?r-stock:null;
           const dc=diff===null?C.dim:diff<0?'#f08080':diff>0?'#7dce9b':C.muted;
@@ -336,16 +353,16 @@ function StockControlBody({productos,showToast,onBack,last,save,user,refresh}){
       </div>
       {diffs.some(d=>d.diff!==0&&d.diff!==null)&&(
         <div style={{background:C.wineBg,border:`1px solid ${C.wine}55`,borderRadius:12,padding:'14px 16px',marginBottom:16,fontFamily:'system-ui'}}>
-          <div style={{color:'#E07080',fontSize:13,fontWeight:700,marginBottom:8}}>⚠ Diferencias detectadas</div>
+          <div style={{color:'#E07080',fontSize:13,fontWeight:700,marginBottom:8}}>⚠ Diferencias detectadas en {deposito}</div>
           {diffs.filter(d=>d.diff!==0&&d.diff!==null).map(d=>(
             <div key={d.id} style={{display:'flex',justifyContent:'space-between',fontSize:13,color:C.muted,paddingBottom:6,marginBottom:6,borderBottom:`1px solid ${C.border}`}}>
               <span>{d.label}</span><span style={{color:d.diff<0?'#f08080':'#7dce9b',fontWeight:700}}>{d.diff>0?'+':''}{d.diff} bot</span>
             </div>
           ))}
-          <div style={{color:'#A06070',fontSize:12,marginTop:4,lineHeight:1.5}}>Causas posibles: retiros sin avisar, cobro en especie del depósito, movimientos entre depósitos sin cargar (usá la pestaña "Mover entre depósitos").</div>
+          <div style={{color:'#A06070',fontSize:12,marginTop:4,lineHeight:1.5}}>Causas posibles: retiros sin avisar, cobro en especie del depósito, o un movimiento a/desde {deposito} sin cargar (usá "Mover entre depósitos").</div>
         </div>
       )}
-      <Btn onClick={confirm} style={{width:'100%',opacity:(allFilled&&!sending)?1:0.5}} disabled={!allFilled||sending}>{sending?'Guardando…':allFilled?'Confirmar control de stock':'Completá todos los campos'}</Btn>
+      <Btn onClick={confirm} style={{width:'100%',opacity:(allFilled&&!sending)?1:0.5}} disabled={!allFilled||sending}>{sending?'Guardando…':allFilled?`Confirmar control de ${deposito}`:'Completá todos los campos'}</Btn>
   </>);
 }
 
@@ -443,7 +460,7 @@ function DashboardScreen({onNavigate,price,source,ops,productos,last}){
               {daysSince===null?'⚠ Control de stock pendiente':daysSince>30?`⚠ Último control hace ${daysSince} días`:`✓ Control de stock · hace ${daysSince} día${daysSince===1?'':'s'}`}
             </div>
             <div style={{color:daysSince===null||daysSince>30?'#A06070':C.dim,fontSize:12,fontFamily:'system-ui'}}>
-              {last?`${last.fecha} a las ${last.hora}`:'Nunca realizado'}
+              {last?`${last.deposito?last.deposito+' · ':''}${last.fecha} a las ${last.hora}`:'Nunca realizado'}
             </div>
           </div>
           <button onClick={()=>onNavigate('stock')} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:8,padding:'7px 12px',color:C.gold,fontSize:12,fontFamily:'system-ui',fontWeight:700,cursor:'pointer',flexShrink:0}}>
