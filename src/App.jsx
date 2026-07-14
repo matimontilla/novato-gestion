@@ -266,7 +266,7 @@ function SettingsPanel({user,onClose,onLogout,showToast}){
 }
 
 // ── STOCK (control físico + transferencias entre depósitos) ────────────────
-function StockScreen({onBack,showToast,onSaved,productos,applyTransfer,user}){
+function StockScreen({onBack,showToast,onSaved,productos,applyTransfer,user,refresh}){
   const [view,setView]=useState('control'); // 'control' | 'transfer'
   return(
     <div style={{padding:'20px 16px',maxWidth:500,margin:'0 auto'}}>
@@ -281,7 +281,7 @@ function StockScreen({onBack,showToast,onSaved,productos,applyTransfer,user}){
       </div>
       {view==='control'
         ? <StockControlBody productos={productos} showToast={showToast} onSaved={onSaved} onBack={onBack}/>
-        : <TransferForm productos={productos} applyTransfer={applyTransfer} user={user} showToast={showToast} onBack={onBack}/>}
+        : <TransferForm productos={productos} applyTransfer={applyTransfer} user={user} showToast={showToast} onBack={onBack} refresh={refresh}/>}
     </div>
   );
 }
@@ -336,7 +336,7 @@ function StockControlBody({productos,showToast,onSaved,onBack}){
 }
 
 // ── TRANSFERENCIA ENTRE DEPÓSITOS ───────────────────────────────────────
-function TransferForm({productos,applyTransfer,user,showToast,onBack}){
+function TransferForm({productos,applyTransfer,user,showToast,onBack,refresh}){
   const hoy=new Date().toISOString().split('T')[0];
   const [f,setF]=useState({producto:'',cantidad:'',desde:'',hacia:'',fecha:hoy,notas:''});
   const [sending,setSending]=useState(false);
@@ -351,7 +351,10 @@ function TransferForm({productos,applyTransfer,user,showToast,onBack}){
     setSending(true);
     try{
       applyTransfer({productoId:f.producto,desde:f.desde,hacia:f.hacia,cantidad:cant});
-      if(GAS_URL) await gasGet({action:'addTransfer',fecha:f.fecha,producto:prod?.label,cantidad:cant,desde:f.desde,hacia:f.hacia,notas:f.notas||'',user:user.nombre});
+      if(GAS_URL){
+        await gasGet({action:'addTransfer',fecha:f.fecha,producto:prod?.label,cantidad:cant,desde:f.desde,hacia:f.hacia,notas:f.notas||'',user:user.nombre});
+        await refresh();
+      }
       showToast(`✓ ${cant} bot de ${prod?.label}: ${f.desde} → ${f.hacia}${GAS_URL?' (enviado a Sheets)':''}`,'ok');
       onBack();
     }catch(e){ showToast('Error al registrar el movimiento.','error'); }
@@ -472,7 +475,7 @@ function DashboardScreen({onNavigate,price,source,ops,productos}){
 }
 
 // ── NUEVA VENTA ──────────────────────────────────────────────────────────
-function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clientes}){
+function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clientes,refresh}){
   const hoy=new Date().toISOString().split('T')[0];
   const [f,setF]=useState({producto:'',botellas:'',cliente:'',clienteNuevo:'',canal:'',monto:'',moneda:'ARS',fecha:hoy,notas:'',deposito:''});
   const [sending,setSending]=useState(false);
@@ -500,6 +503,7 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
       applySale({productoId:f.producto,deposito:f.deposito,cantidad:cant});
       const montoStr=f.monto?`$${parseInt(f.monto).toLocaleString('es-AR')} ${f.moneda}`:'sin monto';
       await addOp({id:Date.now(),icon:'🍾',desc:`${f.botellas} bot ${prod?.label} → ${cl}`,monto:montoStr,fecha:new Date(f.fecha+'T12:00').toLocaleDateString('es-AR'),user:user.nombre});
+      if(GAS_URL) await refresh();
       showToast(`✓ Venta registrada en BALANCE${referencia?' ('+referencia+')':''}`,'ok');
       onBack();
     } catch(e){ showToast('Error al registrar. Intentá de nuevo.','error'); }
@@ -541,7 +545,7 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
 }
 
 // ── CAJA ─────────────────────────────────────────────────────────────────
-function CajaScreen({user,onBack,showToast,addOp,ventasPendientes}){
+function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,refresh}){
   const hoy=new Date().toISOString().split('T')[0];
   const [f,setF]=useState({tipo:'cobro',monto:'',moneda:'ARS',caja:'Empresa (Ludico)',concepto:'',fecha:hoy,referencia:''});
   const [sending,setSending]=useState(false);
@@ -553,6 +557,7 @@ function CajaScreen({user,onBack,showToast,addOp,ventasPendientes}){
       if(GAS_URL) await gasGet({action:'addMovement',fecha:f.fecha,tipo:f.tipo,monto:f.monto,moneda:f.moneda,caja:f.caja,concepto:f.concepto,referencia:f.referencia||'',user:user.nombre});
       const icon=f.tipo==='cobro'?'💵':'💸';
       await addOp({id:Date.now(),icon,desc:`${f.tipo==='cobro'?'Cobro':'Gasto'}: ${f.concepto}`,monto:`${f.moneda} ${parseInt(f.monto).toLocaleString('es-AR')}`,fecha:new Date(f.fecha+'T12:00').toLocaleDateString('es-AR'),user:user.nombre});
+      if(GAS_URL) await refresh();
       showToast(`✓ Movimiento registrado${GAS_URL?' en CAJA':''}`,'ok');
       onBack();
     } catch(e){ showToast('Error al registrar. Intentá de nuevo.','error'); }
@@ -644,7 +649,7 @@ function Nav({screen,setScreen}){
 // ── APP ───────────────────────────────────────────────────────────────────
 export default function NovatoApp(){
   const [user,setUser]=useState(null);const [screen,setScreen]=useState('dashboard');const [toast,setToast]=useState(null);const [settings,setSettings]=useState(false);const [ctrlKey,setCtrlKey]=useState(0);
-  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,clientes}=useAppData();
+  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,clientes,refresh}=useAppData();
   const {productos,applyTransfer,applySale}=useProductos(stockUbicacion);
   const showToast=(msg,type='ok')=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
   const logout=()=>{setUser(null);setSettings(false);setScreen('dashboard');};
@@ -659,9 +664,9 @@ export default function NovatoApp(){
       </div>
       <div style={{paddingBottom:80}}>
         {screen==='dashboard'&&<DashboardScreen onNavigate={setScreen} price={price} source={source} ops={ops} productos={productos}/>}
-        {screen==='venta'&&<VentaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} price={price} productos={productos} applySale={applySale} clientes={clientes}/>}
-        {screen==='caja'&&<CajaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes}/>}
-        {screen==='stock'&&<StockScreen onBack={()=>setScreen('dashboard')} showToast={showToast} onSaved={()=>setCtrlKey(k=>k+1)} productos={productos} applyTransfer={applyTransfer} user={user}/>}
+        {screen==='venta'&&<VentaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} price={price} productos={productos} applySale={applySale} clientes={clientes} refresh={refresh}/>}
+        {screen==='caja'&&<CajaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes} refresh={refresh}/>}
+        {screen==='stock'&&<StockScreen onBack={()=>setScreen('dashboard')} showToast={showToast} onSaved={()=>setCtrlKey(k=>k+1)} productos={productos} applyTransfer={applyTransfer} user={user} refresh={refresh}/>}
         {screen==='consultas'&&<ConsultasScreen price={price} productos={productos}/>}
       </div>
       <Nav screen={screen} setScreen={setScreen}/>
