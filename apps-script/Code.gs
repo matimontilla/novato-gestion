@@ -497,6 +497,30 @@ function repararBalance() {
   Logger.log('Listo — ' + reparadas + ' fila(s) con fórmulas rotas reparadas, ' + aniosCompletados + ' con AÑO completado.');
 }
 
+// ── DESHACER LA VENTA DE PRUEBA (correr UNA SOLA VEZ, después borrar o ignorar) ──
+// Específico para el caso puntual: borra la fila 379 de BALANCE (la venta de prueba
+// rota, 6 bot Cabernet Franc 2022) y le devuelve esas 6 botellas a R Peña en STOCK,
+// como si la venta nunca se hubiera cargado. Verifica que la fila 379 sea realmente
+// esa venta antes de tocar nada — si no coincide, no borra nada y avisa por Logger.
+function deshacerVentaTest() {
+  var balance  = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  var fila     = 379;
+  var detalle  = balance.getRange(fila, 3).getValue();  // C DETALLE
+  var producto = balance.getRange(fila, 5).getValue();  // E PRODUCTO
+  var botellas = balance.getRange(fila, 13).getValue(); // M BOTELLAS
+
+  if (detalle !== 'Venta' || producto !== 'Cabernet Franc 2022' || botellas !== 6) {
+    Logger.log('La fila ' + fila + ' no coincide con la venta de prueba esperada ' +
+      '(Venta, Cabernet Franc 2022, 6 bot) — encontré: ' + detalle + ', ' + producto + ', ' + botellas + ' bot. ' +
+      'No borré nada, revisá la fila a mano.');
+    return;
+  }
+
+  balance.deleteRow(fila);
+  ajustarStockUbicacion('Cab. Franc 2022', null, 'R Peña', 6); // le devuelve las 6 botellas a R Peña
+  Logger.log('Listo — fila ' + fila + ' borrada y 6 botellas de Cabernet Franc 2022 devueltas a R Peña.');
+}
+
 // ── HELPERS ──────────────────────────────────────────────────────────
 function getOrCreateSheet(name, headers) {
   var ss    = SpreadsheetApp.getActiveSpreadsheet();
