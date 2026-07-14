@@ -353,7 +353,7 @@ function getVentasPendientes() {
     var r = data[i];
     if (r[1] !== 'Venta' || !r[10]) continue; // C DETALLE, L REFERENCIA (sin referencia no se puede vincular)
     var saldoArs = r[13];                // O SALDO $
-    if (!saldoArs) continue;
+    if (!saldoArs || Math.round(saldoArs) === 0) continue; // ignorar residuos de redondeo (ej. 0.003) que ya están saldados
     out.push({
       referencia: r[10],                 // L
       cliente:    r[2],                  // D
@@ -381,7 +381,7 @@ function getComprasPendientes() {
     var r = data[i];
     if (r[12] !== 'Egreso' || !r[10]) continue; // N CONCEPTO, L REFERENCIA
     var saldoArs = r[13];                       // O SALDO $
-    if (!saldoArs) continue;
+    if (!saldoArs || Math.round(saldoArs) === 0) continue; // ignorar residuos de redondeo (ej. 0.003) que ya están saldados
     out.push({
       referencia: r[10],                        // L
       detalle:    r[1],                         // C
