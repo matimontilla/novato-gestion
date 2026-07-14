@@ -352,6 +352,7 @@ function addStockControl(p) {
   var ahora   = new Date();
   items.forEach(function(it) {
     sheet.appendRow([p.fecha, p.hora, p.user, p.deposito || '', it.label, it.stock, it.real, it.diff, ahora]);
+    fijarStockUbicacion(it.label, p.deposito, it.real); // corrige STOCK con lo contado de verdad
   });
   return { ok: true };
 }
@@ -432,6 +433,27 @@ function ajustarStockUbicacion(productoApp, desde, hacia, cantidad) {
   }
 }
 
+// Fija el valor REAL contado en un depósito para un producto (a diferencia de
+// ajustarStockUbicacion, no suma/resta — pisa el valor con lo contado físicamente).
+// La usa el Control de stock para corregir STOCK con lo que se encontró de verdad.
+function fijarStockUbicacion(productoApp, deposito, valor) {
+  var stock = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('STOCK');
+  if (!stock) throw new Error('No se encontró la pestaña STOCK');
+  var data        = stock.getRange('B12:I18').getValues();
+  var headers     = data[0];
+  var nombreSheet = PRODUCTO_APP_TO_SHEET[productoApp] || productoApp;
+
+  var rowIdx = -1;
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0] === nombreSheet) { rowIdx = i; break; }
+  }
+  if (rowIdx === -1) throw new Error('Producto no encontrado en STOCK: ' + productoApp);
+
+  var col = headers.indexOf(UBIC_SHEET_MAP[deposito] || deposito);
+  if (col === -1) throw new Error('Depósito no reconocido: ' + deposito);
+  stock.getRange(12 + rowIdx, 2 + col).setValue(valor);
+}
+
 // ── OPERACIONES RECIENTES (ventas + movimientos + transferencias) ───
 // Ventas y Movimientos se identifican por tener algo cargado en la columna A
 // (que hasta ahora estaba sin usar) — ahí guardamos quién lo cargó desde la app,
@@ -498,79 +520,46 @@ function getRecentOps(n) {
 }
 
 // ── UTILIDAD OPCIONAL — correr UNA VEZ a mano si querés ────────────────
-// Sin esto, un cobro cargado hoy contra una venta VIEJA (anterior a la app, con la
-// fórmula original de rango fijo) no se reflejaría en su saldo, ni una venta vieja
-// se restaría del STOCK agregado. Correr una sola vez arregla las filas existentes;
-// las filas nuevas (vía addSale) ya nacen con rango abierto, así que no vuelve a hacer falta.
-// Convierte los rangos de fila fija (ej. $I$3:$I$511) en rangos abiertos ($I$3:$I),
-// tanto en BALANCE (columnas O, P que miran a CAJA) como en STOCK (EGRESOS que mira
-// a BALANCE). Un rango abierto llega hasta la última fila de la hoja automáticamente,
-// así que esto es un arreglo DEFINITIVO — no hace falta volver a correrlo nunca.
-function ampliarRangosReconciliacion() {
-  var patronCierre = /(:\$[A-Za-z]+)\$\d+/g; // busca ":$COL$NUM" y deja sólo ":$COL"
-
+// Reescribe TODAS las fórmulas calculadas de BALANCE (sin importar en qué estado
+// estén — rotas, con rango viejo, o directamente bien) usando las mismas plantillas
+// que addSale, más la fila de TOTALES (con una fórmula basada en ROW() que no
+// depende de ningún número de fila fijo, así nunca vuelve a quedar corta ni corre
+// riesgo de auto-referenciarse) y el EGRESOS agregado de STOCK (rango abierto real
+// hacia BALANCE). Es un arreglo definitivo — no perjudica nada si se corre de nuevo.
+function repararTodasLasFormulas() {
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   var lastRow = balance.getLastRow();
-  var cambiosBalance = 0;
+  var filasReparadas = 0, filaTotales = -1;
+
   if (lastRow >= 3) {
-    var range    = balance.getRange(3, 15, lastRow - 2, 2); // O:P
-    var formulas = range.getFormulas();
-    for (var i = 0; i < formulas.length; i++) {
-      for (var j = 0; j < formulas[i].length; j++) {
-        if (formulas[i][j] && patronCierre.test(formulas[i][j])) {
-          formulas[i][j] = formulas[i][j].replace(patronCierre, '$1');
-          cambiosBalance++;
-        }
-        patronCierre.lastIndex = 0;
-      }
+    for (var row = 3; row <= lastRow; row++) {
+      var fecha  = balance.getRange(row, 2).getValue();  // B FECHA
+      var etiq   = balance.getRange(row, 14).getValue(); // N (CONCEPTO, o 'TOTALES:' en esa fila)
+      if (etiq === 'TOTALES:') { filaTotales = row; continue; }
+      if (fecha instanceof Date) { escribirFormulasBalance(row); filasReparadas++; }
     }
-    range.setFormulas(formulas);
+  }
+
+  if (filaTotales > 0) {
+    // ROW()-1 apunta siempre a "la fila justo arriba mío", sin importar cuánto se
+    // haya desplazado esta fila de TOTALES por inserciones — nunca queda corto ni
+    // se auto-referencia.
+    balance.getRange(filaTotales, 15).setValue('=SUM(INDIRECT("O3:O"&(ROW()-1)))');
+    balance.getRange(filaTotales, 16).setValue('=SUMIF(INDIRECT("O3:O"&(ROW()-1));0;INDIRECT("P3:P"&(ROW()-1)))');
   }
 
   var stock = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('STOCK');
-  var cambiosStock = 0;
+  var stockReparado = false;
   if (stock) {
-    var rangeStock    = stock.getRange(4, 6, 6, 1); // F4:F9 = EGRESOS
-    var formulasStock = rangeStock.getFormulas();
-    for (var k = 0; k < formulasStock.length; k++) {
-      if (formulasStock[k][0] && patronCierre.test(formulasStock[k][0])) {
-        formulasStock[k][0] = formulasStock[k][0].replace(patronCierre, '$1');
-        cambiosStock++;
-      }
-      patronCierre.lastIndex = 0;
+    for (var r2 = 4; r2 <= 9; r2++) {
+      stock.getRange(r2, 6).setValue('=SUMIF(BALANCE!$E$2:$E;STOCK!$B' + r2 + ';BALANCE!$M$2:$M)');
     }
-    rangeStock.setFormulas(formulasStock);
+    stockReparado = true;
   }
 
-  Logger.log('Listo — ' + cambiosBalance + ' fórmulas de BALANCE y ' + cambiosStock + ' de STOCK ahora usan rango abierto (sin límite de fila).');
-}
-
-// ── REPARAR FILAS DE BALANCE ──────────────────────────────────────────
-// Corre esto UNA VEZ después de actualizar el script si alguna venta quedó con
-// #ERROR! en sus columnas calculadas (pasó por escribir fórmulas con coma en un
-// Sheet configurado en español). Recorre BALANCE y:
-//  1) Completa la columna AÑO donde falte (arrastre viejo se cortó en la fila 369).
-//  2) Reescribe TODAS las fórmulas calculadas en cualquier fila que muestre un error.
-// No toca filas que ya están bien.
-function repararBalance() {
-  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
-  var lastRow = balance.getLastRow();
-  if (lastRow < 3) { Logger.log('BALANCE está vacío, nada para reparar.'); return; }
-
-  var reparadas = 0, aniosCompletados = 0;
-  for (var row = 3; row <= lastRow; row++) {
-    var valorF = balance.getRange(row, 6).getValue();  // F AÑADA
-    var valorR = balance.getRange(row, 18).getValue(); // R AÑO
-    var esError = typeof valorF === 'string' && valorF.indexOf('#') === 0;
-    if (esError) {
-      escribirFormulasBalance(row);
-      reparadas++;
-    } else if (valorR === '' || valorR === null) {
-      balance.getRange(row, 18).setValue('=IF(BALANCE!$B' + row + '="";"";YEAR(BALANCE!$B' + row + '))');
-      aniosCompletados++;
-    }
-  }
-  Logger.log('Listo — ' + reparadas + ' fila(s) con fórmulas rotas reparadas, ' + aniosCompletados + ' con AÑO completado.');
+  Logger.log('Listo — ' + filasReparadas + ' fila(s) de BALANCE reescritas' +
+    (filaTotales > 0 ? ', TOTALES (fila ' + filaTotales + ') arreglado' : ', no encontré la fila TOTALES') +
+    (stockReparado ? ', EGRESOS de STOCK reescrito.' : '.'));
 }
 
 // ── DESHACER LA VENTA DE PRUEBA (correr UNA SOLA VEZ, después borrar o ignorar) ──

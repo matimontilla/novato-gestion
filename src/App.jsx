@@ -300,16 +300,17 @@ function StockScreen({onBack,showToast,productos,applyTransfer,user,refresh,last
 }
 
 function StockControlBody({productos,showToast,onBack,last,save,user,refresh}){
+  const productosOrdenados=[...productos].sort((a,b)=>totalStock(b)-totalStock(a)); // mayor a menor, los de 0 al final
   const [deposito,setDeposito]=useState(UBICACIONES[0]);
-  const [real,setReal]=useState(Object.fromEntries(productos.map(p=>[p.id,''])));
-  useEffect(()=>{ setReal(Object.fromEntries(productos.map(p=>[p.id,'']))); },[deposito]); // no arrastrar números de otro depósito
+  const [real,setReal]=useState(Object.fromEntries(productosOrdenados.map(p=>[p.id,'0'])));
+  useEffect(()=>{ setReal(Object.fromEntries(productosOrdenados.map(p=>[p.id,'0']))); },[deposito]); // no arrastrar números de otro depósito
   const set=(id,v)=>setReal(p=>({...p,[id]:v.replace(/\D/g,'')}));
-  const diffs=productos.map(p=>{
+  const diffs=productosOrdenados.map(p=>{
     const teorico=p.stockUbic[deposito]||0;
     const r=real[p.id]===''?null:parseInt(real[p.id]);
     return{...p,stock:teorico,real:r,diff:r!==null?r-teorico:null};
   }).filter(p=>p.real!==null);
-  const hasDiff=diffs.some(d=>d.diff!==0);const allFilled=productos.every(p=>real[p.id]!=='');
+  const hasDiff=diffs.some(d=>d.diff!==0);const allFilled=productosOrdenados.every(p=>real[p.id]!=='');
   const [sending,setSending]=useState(false);
   const confirm=async()=>{
     const ctrl={deposito,fecha:new Date().toLocaleDateString('es-AR'),hora:new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}),items:diffs};
@@ -338,7 +339,7 @@ function StockControlBody({productos,showToast,onBack,last,save,user,refresh}){
         <div style={{display:'grid',gridTemplateColumns:'1fr 80px 80px 80px',gap:8,padding:'0 4px'}}>
           {['Producto','Teórico','Real','Dif.'].map(h=><div key={h} style={{fontSize:10,color:C.dim,letterSpacing:'0.1em',textTransform:'uppercase',fontFamily:'system-ui',textAlign:h!=='Producto'?'center':'left'}}>{h}</div>)}
         </div>
-        {productos.map(p=>{
+        {productosOrdenados.map(p=>{
           const stock=p.stockUbic[deposito]||0;
           const r=real[p.id]===''?null:parseInt(real[p.id]);
           const diff=r!==null?r-stock:null;
@@ -347,7 +348,7 @@ function StockControlBody({productos,showToast,onBack,last,save,user,refresh}){
             <div key={p.id} style={{background:C.barrel,border:`1px solid ${diff!==null&&diff!==0?dc+'44':C.border}`,borderRadius:12,padding:'12px 14px',display:'grid',gridTemplateColumns:'1fr 80px 80px 80px',gap:8,alignItems:'center'}}>
               <div><div style={{color:C.text,fontSize:14,fontFamily:'system-ui',fontWeight:600}}>{p.label}</div><div style={{width:40,height:3,background:p.hex,borderRadius:2,marginTop:4}}/></div>
               <div style={{textAlign:'center',color:C.muted,fontSize:15,fontFamily:'system-ui'}}>{stock}</div>
-              <input type="number" min="0" placeholder="—" value={real[p.id]} onChange={e=>set(p.id,e.target.value)} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:8,padding:'8px',color:C.text,fontSize:15,fontFamily:'system-ui',outline:'none',width:'100%',boxSizing:'border-box',textAlign:'center'}}/>
+              <input type="number" min="0" placeholder="—" value={real[p.id]} onChange={e=>set(p.id,e.target.value)} onFocus={e=>e.target.select()} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:8,padding:'8px',color:C.text,fontSize:15,fontFamily:'system-ui',outline:'none',width:'100%',boxSizing:'border-box',textAlign:'center'}}/>
               <div style={{textAlign:'center',fontWeight:700,fontSize:15,fontFamily:'system-ui',color:dc}}>{diff===null?'—':diff===0?'✓':diff>0?`+${diff}`:diff}</div>
             </div>
           );
@@ -413,6 +414,7 @@ function TransferForm({productos,applyTransfer,user,showToast,onBack,refresh}){
 function DashboardScreen({onNavigate,price,source,ops,productos,last}){
   const {tc,err:tcErr,date:tcDate}=useDolarBlue();
   const total=productos.reduce((s,p)=>s+totalStock(p),0);
+  const productosOrdenados=[...productos].sort((a,b)=>totalStock(b)-totalStock(a)); // mayor a menor, los de 0 quedan al final
   const ars=price?total*price:null; const usd=ars&&tc?Math.round(ars/tc):null;
   const daysSince=last?(()=>{try{const [d,m,y]=last.fecha.split('/');return Math.floor((Date.now()-new Date(`${y}-${m}-${d}`).getTime())/86400000);}catch{return null;}})():null;
   return(
@@ -433,14 +435,14 @@ function DashboardScreen({onNavigate,price,source,ops,productos,last}){
       <SL>Stock por producto</SL>
       <Card style={{marginBottom:14}}>
         <div style={{display:'flex',gap:8,alignItems:'flex-end',height:110,marginBottom:10}}>
-          {productos.map(p=>{const stock=totalStock(p);const pct=p.max>0?stock/p.max:0;const h=Math.max(Math.round(pct*90),stock>0?4:2);return(<div key={p.id} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:4}}><div style={{fontSize:9,color:stock>0?C.muted:C.dim,fontFamily:'system-ui',minHeight:13}}>{stock>0?stock.toLocaleString('es-AR'):''}</div><div style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}><div style={{width:'35%',height:13,background:C.cork,borderRadius:'3px 3px 0 0',border:`1px solid ${C.border}`,borderBottom:'none'}}/><div style={{width:'100%',height:80,background:C.cork,borderRadius:'2px 2px 6px 6px',border:`1px solid ${C.border}`,overflow:'hidden',display:'flex',alignItems:'flex-end'}}><div style={{width:'100%',height:`${h}px`,background:stock>0?p.hex:C.cork,transition:'height 0.8s cubic-bezier(.4,0,.2,1)'}}/></div></div></div>);})}
+          {productosOrdenados.map(p=>{const stock=totalStock(p);const pct=p.max>0?stock/p.max:0;const h=Math.max(Math.round(pct*90),stock>0?4:2);return(<div key={p.id} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:4}}><div style={{fontSize:9,color:stock>0?C.muted:C.dim,fontFamily:'system-ui',minHeight:13}}>{stock>0?stock.toLocaleString('es-AR'):''}</div><div style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}><div style={{width:'35%',height:13,background:C.cork,borderRadius:'3px 3px 0 0',border:`1px solid ${C.border}`,borderBottom:'none'}}/><div style={{width:'100%',height:80,background:C.cork,borderRadius:'2px 2px 6px 6px',border:`1px solid ${C.border}`,overflow:'hidden',display:'flex',alignItems:'flex-end'}}><div style={{width:'100%',height:`${h}px`,background:stock>0?p.hex:C.cork,transition:'height 0.8s cubic-bezier(.4,0,.2,1)'}}/></div></div></div>);})}
         </div>
-        <div style={{display:'flex',gap:8}}>{productos.map(p=><div key={p.id} style={{flex:1,textAlign:'center'}}><div style={{fontSize:8,color:totalStock(p)>0?C.muted:C.dim,fontFamily:'system-ui',lineHeight:1.3}}>{p.label.split(' ').map((w,i)=><span key={i}>{w}<br/></span>)}</div></div>)}</div>
+        <div style={{display:'flex',gap:8}}>{productosOrdenados.map(p=><div key={p.id} style={{flex:1,textAlign:'center'}}><div style={{fontSize:8,color:totalStock(p)>0?C.muted:C.dim,fontFamily:'system-ui',lineHeight:1.3}}>{p.label.split(' ').map((w,i)=><span key={i}>{w}<br/></span>)}</div></div>)}</div>
       </Card>
       <SL>Stock por depósito</SL>
       <Card style={{marginBottom:14}}>
         <div style={{display:'flex',flexDirection:'column',gap:10}}>
-          {productos.filter(p=>totalStock(p)>0).map(p=>(
+          {productosOrdenados.filter(p=>totalStock(p)>0).map(p=>(
             <div key={p.id}>
               <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:5}}><div style={{width:8,height:8,borderRadius:2,background:p.hex,flexShrink:0}}/><span style={{color:C.text,fontSize:12,fontFamily:'system-ui',fontWeight:600}}>{p.label}</span></div>
               <div style={{display:'flex',flexWrap:'wrap',gap:6,paddingLeft:14}}>
