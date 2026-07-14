@@ -225,16 +225,20 @@ function nextReferencia(prefix) {
 // separados por PUNTO Y COMA (;), no coma. Escribir con comas produce #ERROR!.
 function escribirFormulasBalance(row) {
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
-  balance.getRange(row, 6).setValue('=RIGHT(E' + row + ';4)');                                                    // F AÑADA
-  balance.getRange(row, 8).setValue('=G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1)'); // H MONTO US$ FF
-  balance.getRange(row, 9).setValue('=H' + row + '+P' + row);                                                     // I MONTO US$ FP
-  balance.getRange(row, 10).setValue('=G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)');              // J CU $
-  balance.getRange(row, 11).setValue('=H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)');              // K CU US$
+  balance.getRange(row, 6).setValue('=RIGHT(E' + row + ';4)'); // F AÑADA
+  balance.getRange(row, 8, 1, 4).setValues([[
+    '=G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1)', // H MONTO US$ FF
+    '=H' + row + '+P' + row,                                                               // I MONTO US$ FP
+    '=G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)',                         // J CU $
+    '=H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)'                          // K CU US$
+  ]]);
   balance.getRange(row, 14).setValue('=IF(G' + row + '>0;"Ingreso";(IF(G' + row + '=0;"Movimiento";"Egreso")))'); // N CONCEPTO
-  balance.getRange(row, 15).setValue('=G' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$F$3:$F)');        // O SALDO $ (rango abierto: nunca queda corto)
-  balance.getRange(row, 16).setValue('=-(H' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$G$3:$G))');     // P SALDO US$
-  balance.getRange(row, 17).setValue('=IF(N' + row + '="Egreso";-P' + row + '/H' + row + ';P' + row + '/H' + row + ')');   // Q % DIF POR TC
-  balance.getRange(row, 18).setValue('=IF(BALANCE!$B' + row + '="";"";YEAR(BALANCE!$B' + row + '))');             // R AÑO
+  balance.getRange(row, 15, 1, 4).setValues([[
+    '=G' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$F$3:$F)',                         // O SALDO $ (rango abierto)
+    '=-(H' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$G$3:$G))',                      // P SALDO US$
+    '=IF(N' + row + '="Egreso";-P' + row + '/H' + row + ';P' + row + '/H' + row + ')',    // Q % DIF POR TC
+    '=IF(BALANCE!$B' + row + '="";"";YEAR(BALANCE!$B' + row + '))'                         // R AÑO
+  ]]);
 }
 
 // Registra la venta en BALANCE (con las mismas fórmulas que usa cualquier fila
@@ -529,16 +533,54 @@ function getRecentOps(n) {
 function repararTodasLasFormulas() {
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   var lastRow = balance.getLastRow();
-  var filasReparadas = 0, filaTotales = -1;
+  if (lastRow < 3) { Logger.log('BALANCE está vacío, nada para reparar.'); return; }
 
-  if (lastRow >= 3) {
-    for (var row = 3; row <= lastRow; row++) {
-      var fecha  = balance.getRange(row, 2).getValue();  // B FECHA
-      var etiq   = balance.getRange(row, 14).getValue(); // N (CONCEPTO, o 'TOTALES:' en esa fila)
-      if (etiq === 'TOTALES:') { filaTotales = row; continue; }
-      if (fecha instanceof Date) { escribirFormulasBalance(row); filasReparadas++; }
-    }
+  var n = lastRow - 2;
+  var fechas    = balance.getRange(3, 2, n, 1).getValues();  // B FECHA — 1 sola llamada para todo el rango
+  var conceptos = balance.getRange(3, 14, n, 1).getValues(); // N — para ubicar la fila 'TOTALES:'
+
+  var filaTotales = -1;
+  var filas = [];
+  for (var i = 0; i < n; i++) {
+    var row = i + 3;
+    if (conceptos[i][0] === 'TOTALES:') { filaTotales = row; continue; }
+    if (fechas[i][0] instanceof Date) filas.push(row);
   }
+
+  // Agrupar en bloques consecutivos, para escribir cada bloque con UNA sola llamada
+  // por grupo de columnas (en vez de una llamada por celda) — esto es lo que importa
+  // para la velocidad: pocas llamadas grandes, no miles de llamadas chicas.
+  var grupos = [], actual = [];
+  for (var g = 0; g < filas.length; g++) {
+    if (actual.length === 0 || filas[g] === actual[actual.length - 1] + 1) actual.push(filas[g]);
+    else { grupos.push(actual); actual = [filas[g]]; }
+  }
+  if (actual.length) grupos.push(actual);
+
+  grupos.forEach(function(grupo) {
+    var inicio = grupo[0];
+    var colF = [], colHK = [], colN = [], colOR = [];
+    grupo.forEach(function(row) {
+      colF.push(['=RIGHT(E' + row + ';4)']);
+      colHK.push([
+        '=G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1)',
+        '=H' + row + '+P' + row,
+        '=G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)',
+        '=H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)'
+      ]);
+      colN.push(['=IF(G' + row + '>0;"Ingreso";(IF(G' + row + '=0;"Movimiento";"Egreso")))']);
+      colOR.push([
+        '=G' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$F$3:$F)',
+        '=-(H' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$G$3:$G))',
+        '=IF(N' + row + '="Egreso";-P' + row + '/H' + row + ';P' + row + '/H' + row + ')',
+        '=IF(BALANCE!$B' + row + '="";"";YEAR(BALANCE!$B' + row + '))'
+      ]);
+    });
+    balance.getRange(inicio, 6, grupo.length, 1).setValues(colF);
+    balance.getRange(inicio, 8, grupo.length, 4).setValues(colHK);
+    balance.getRange(inicio, 14, grupo.length, 1).setValues(colN);
+    balance.getRange(inicio, 15, grupo.length, 4).setValues(colOR);
+  });
 
   if (filaTotales > 0) {
     // ROW()-1 apunta siempre a "la fila justo arriba mío", sin importar cuánto se
@@ -551,13 +593,15 @@ function repararTodasLasFormulas() {
   var stock = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('STOCK');
   var stockReparado = false;
   if (stock) {
+    var colEgresos = [];
     for (var r2 = 4; r2 <= 9; r2++) {
-      stock.getRange(r2, 6).setValue('=SUMIF(BALANCE!$E$2:$E;STOCK!$B' + r2 + ';BALANCE!$M$2:$M)');
+      colEgresos.push(['=SUMIF(BALANCE!$E$2:$E;STOCK!$B' + r2 + ';BALANCE!$M$2:$M)']);
     }
+    stock.getRange(4, 6, 6, 1).setValues(colEgresos);
     stockReparado = true;
   }
 
-  Logger.log('Listo — ' + filasReparadas + ' fila(s) de BALANCE reescritas' +
+  Logger.log('Listo — ' + filas.length + ' fila(s) de BALANCE reescritas en ' + grupos.length + ' bloque(s)' +
     (filaTotales > 0 ? ', TOTALES (fila ' + filaTotales + ') arreglado' : ', no encontré la fila TOTALES') +
     (stockReparado ? ', EGRESOS de STOCK reescrito.' : '.'));
 }
