@@ -120,6 +120,21 @@ function parseFechaApp(s) {
   return new Date(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2]));
 }
 
+// getLastRow() no sirve para saber dónde termina la data real: tanto BALANCE como
+// CAJA tienen bloques de totales unas filas más abajo (con SUMIF/SUM propios, y algún
+// espacio suelto) que hacen que getLastRow() devuelva una fila mucho más lejana que la
+// última operación real. Esta función busca la última fila con una FECHA real (un
+// objeto Date, no un espacio suelto ni una celda de fórmula) en la columna indicada.
+function obtenerUltimaFilaConFecha(sheet, colFecha) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 3) return 2;
+  var valores = sheet.getRange(3, colFecha, lastRow - 2, 1).getValues();
+  for (var i = valores.length - 1; i >= 0; i--) {
+    if (valores[i][0] instanceof Date) return 3 + i;
+  }
+  return 2;
+}
+
 
 // Busca la cotización disponible más cercana (igual o anterior) a una fecha en BLUE_API.
 // BLUE_API ya se actualiza sola (confirmado funcionando), así que a diferencia de la
@@ -201,7 +216,9 @@ function addSale(p) {
 
   var cliente    = p.cliente || 'Particular';
   var referencia = nextReferencia(prefijoCliente(cliente));
-  var row        = balance.getLastRow() + 1;
+  var ultimaReal = obtenerUltimaFilaConFecha(balance, 2); // B = FECHA
+  balance.insertRowAfter(ultimaReal);
+  var row = ultimaReal + 1;
 
   // Datos que vienen del usuario
   balance.getRange(row, 2).setValue(parseFechaApp(p.fecha));    // B FECHA
@@ -260,7 +277,10 @@ function addMovement(p) {
   var montoUS = rate ? Math.round((monto / rate) * 100) / 100 : '';
   var cajaLbl = CAJA_LABELS[p.caja] || p.caja;
 
-  caja.appendRow([
+  var ultimaReal = obtenerUltimaFilaConFecha(caja, 2); // B = FECHA
+  caja.insertRowAfter(ultimaReal);
+  var row = ultimaReal + 1;
+  caja.getRange(row, 1, 1, 9).setValues([[
     p.user || '',                              // A: quién lo cargó (columna sin uso hasta ahora)
     parseFechaApp(p.fecha),                    // B FECHA
     p.tipo === 'cobro' ? 'Cobro' : 'Gasto',    // C DETALLE
@@ -270,7 +290,7 @@ function addMovement(p) {
     montoUS,                                   // G MONTO US$
     cajaLbl,                                   // H CAJA
     p.referencia || ''                         // I REFERENCIA (opcional → venta de BALANCE)
-  ]);
+  ]]);
   return { ok: true };
 }
 
