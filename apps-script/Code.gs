@@ -485,7 +485,7 @@ function getUltimoControlStock() {
   for (var j = 0; j < data.length; j++) {
     var row = data[j];
     if (row[8] instanceof Date && row[8].getTime() === maxTs.getTime()) {
-      fecha = row[0]; hora = row[1]; deposito = row[3];
+      fecha = formatDate(row[0]); hora = formatHora(row[1]); deposito = row[3];
       items.push({ label: row[4], stock: row[5], real: row[6], diff: row[7] });
     }
   }
@@ -819,5 +819,11 @@ function getOrCreateSheet(name, headers) {
 function formatDate(val) {
   if (!val) return '';
   if (val instanceof Date) return Utilities.formatDate(val, 'America/Argentina/Mendoza', 'dd/MM/yyyy');
+  return String(val);
+}
+
+function formatHora(val) {
+  if (!val) return '';
+  if (val instanceof Date) return Utilities.formatDate(val, 'America/Argentina/Mendoza', 'HH:mm');
   return String(val);
 }
