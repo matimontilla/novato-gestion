@@ -745,6 +745,43 @@ function repararTodasLasFormulas() {
 // ── DESHACER LA VENTA DE PRUEBA (correr UNA SOLA VEZ, después borrar o ignorar) ──
 // Específico para el caso puntual: borra la fila 379 de BALANCE (la venta de prueba
 // rota, 6 bot Cabernet Franc 2022) y le devuelve esas 6 botellas a R Peña en STOCK,
+// ── UTILIDAD OPCIONAL — correr UNA VEZ a mano si querés ────────────────
+// Antes del arreglo de addMovement, los movimientos de caja cargados desde la app
+// dejaban un número congelado en MONTO US$ (columna G) en vez de la fórmula XLOOKUP
+// que usa el resto de esa columna. Esto reescribe la fórmula en cualquier fila de
+// CAJA cargada desde la app (columna A no vacía, o sea con usuario) donde G no
+// tenga ya una fórmula. No toca filas históricas manuales.
+function repararMontoUSCaja() {
+  var caja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CAJA');
+  var lastRow = caja.getLastRow();
+  if (lastRow < 3) { Logger.log('CAJA está vacía, nada para reparar.'); return; }
+
+  var n = lastRow - 2;
+  var usuarios  = caja.getRange(3, 1, n, 1).getValues();    // A
+  var formulasG = caja.getRange(3, 7, n, 1).getFormulas();  // G — '' si es un valor plano, no una fórmula
+
+  var filas = [];
+  for (var i = 0; i < n; i++) {
+    if (usuarios[i][0] && !formulasG[i][0]) filas.push(i + 3);
+  }
+
+  var grupos = [], actual = [];
+  for (var g = 0; g < filas.length; g++) {
+    if (actual.length === 0 || filas[g] === actual[actual.length - 1] + 1) actual.push(filas[g]);
+    else { grupos.push(actual); actual = [filas[g]]; }
+  }
+  if (actual.length) grupos.push(actual);
+
+  grupos.forEach(function(grupo) {
+    var col = grupo.map(function(row) {
+      return ['=F' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1)'];
+    });
+    caja.getRange(grupo[0], 7, grupo.length, 1).setValues(col);
+  });
+
+  Logger.log('Listo — ' + filas.length + ' fila(s) de CAJA con MONTO US$ reparado.');
+}
+
 // como si la venta nunca se hubiera cargado. Verifica que la fila 379 sea realmente
 // esa venta antes de tocar nada — si no coincide, no borra nada y avisa por Logger.
 function deshacerVentaTest() {
