@@ -418,16 +418,23 @@ function TransferForm({productos,applyTransfer,user,showToast,onBack,refresh}){
 }
 
 // ── DASHBOARD ────────────────────────────────────────────────────────────
-function DashboardScreen({onNavigate,price,source,productos,last,operacionesPendientes}){
+function DashboardScreen({onNavigate,price,source,productos,last,operacionesPendientes,resumenCajas}){
   const {tc,err:tcErr,date:tcDate}=useDolarBlue();
   const total=productos.reduce((s,p)=>s+totalStock(p),0);
   const productosOrdenados=[...productos].sort((a,b)=>totalStock(b)-totalStock(a)); // mayor a menor, los de 0 quedan al final
   const ars=price?total*price:null; const usd=ars&&tc?Math.round(ars/tc):null;
+  const totalCajaArs=resumenCajas?.reduce((s,c)=>s+c.ars,0)||0;
+  const totalCajaUsd=resumenCajas?.reduce((s,c)=>s+c.usd,0)||0;
   const daysSince=last?(()=>{try{const [d,m,y]=last.fecha.split('/');return Math.floor((Date.now()-new Date(`${y}-${m}-${d}`).getTime())/86400000);}catch{return null;}})():null;
   return(
     <div style={{padding:'20px 16px',maxWidth:540,margin:'0 auto'}}>
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:12}}>
-        {[{v:total.toLocaleString('es-AR'),u:'botellas',l:'Stock total'},{v:usd?`USD ${usd.toLocaleString('es-AR')}`:'…',u:'valorización',l:price?`$${price.toLocaleString('es-AR')}/bot`:'cargando…'},{v:'USD 275',u:'disponibles',l:'Caja empresa'}].map(k=><Card key={k.l} style={{padding:'12px 10px'}}><div style={{color:C.gold,fontSize:17,fontWeight:700,lineHeight:1,fontFamily:'Georgia, serif'}}>{k.v}</div><div style={{color:C.dim,fontSize:10,fontFamily:'system-ui',marginTop:2}}>{k.u}</div><div style={{color:C.muted,fontSize:10,fontFamily:'system-ui',marginTop:5,borderTop:`1px solid ${C.border}`,paddingTop:5}}>{k.l}</div></Card>)}
+        {[{v:total.toLocaleString('es-AR'),u:'botellas',l:'Stock total'},{v:usd?`USD ${usd.toLocaleString('es-AR')}`:'…',u:'valorización',l:price?`$${price.toLocaleString('es-AR')}/bot`:'cargando…'}].map(k=><Card key={k.l} style={{padding:'12px 10px'}}><div style={{color:C.gold,fontSize:17,fontWeight:700,lineHeight:1,fontFamily:'Georgia, serif'}}>{k.v}</div><div style={{color:C.dim,fontSize:10,fontFamily:'system-ui',marginTop:2}}>{k.u}</div><div style={{color:C.muted,fontSize:10,fontFamily:'system-ui',marginTop:5,borderTop:`1px solid ${C.border}`,paddingTop:5}}>{k.l}</div></Card>)}
+        <Card style={{padding:'12px 10px'}}>
+          <div style={{color:C.gold,fontSize:14,fontWeight:700,lineHeight:1.3,fontFamily:'Georgia, serif'}}>${totalCajaArs.toLocaleString('es-AR')}</div>
+          <div style={{color:C.gold,fontSize:12,fontWeight:700,lineHeight:1.3,fontFamily:'Georgia, serif',opacity:0.8}}>USD {totalCajaUsd.toLocaleString('es-AR')}</div>
+          <div style={{color:C.muted,fontSize:10,fontFamily:'system-ui',marginTop:4,borderTop:`1px solid ${C.border}`,paddingTop:5}}>Caja empresa</div>
+        </Card>
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:18}}>
         <div style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',background:C.barrel,border:`1px solid ${C.border}`,borderRadius:10}}>
@@ -778,7 +785,7 @@ export default function NovatoApp(){
         <button onClick={()=>setSettings(true)} style={{display:'flex',alignItems:'center',gap:7,background:C.cork,border:`1px solid ${C.border}`,borderRadius:20,padding:'6px 13px',color:C.muted,fontSize:12,fontFamily:'system-ui',cursor:'pointer'}}><span>{user.emoji}</span><span>{user.nombre}</span><span style={{color:C.dim,fontSize:10}}>⚙</span></button>
       </div>
       <div style={{paddingBottom:80}}>
-        {screen==='dashboard'&&<DashboardScreen onNavigate={setScreen} price={price} source={source} productos={productos} last={last} operacionesPendientes={operacionesPendientes}/>}
+        {screen==='dashboard'&&<DashboardScreen onNavigate={setScreen} price={price} source={source} productos={productos} last={last} operacionesPendientes={operacionesPendientes} resumenCajas={resumenCajas}/>}
         {screen==='venta'&&<VentaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} price={price} productos={productos} applySale={applySale} clientes={clientes} categorias={categorias} contactosBalance={contactosBalance} refresh={refresh}/>}
         {screen==='caja'&&<CajaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes} comprasPendientes={comprasPendientes} refresh={refresh} resumenCajas={resumenCajas} categorias={categorias} contactosBalance={contactosBalance} clientes={clientes}/>}
         {screen==='stock'&&<StockScreen onBack={()=>setScreen('dashboard')} showToast={showToast} productos={productos} applyTransfer={applyTransfer} user={user} refresh={refresh} last={last} save={save}/>}
