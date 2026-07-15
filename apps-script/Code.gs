@@ -293,6 +293,67 @@ function escribirFormulasBalance(row) {
 // Registra la venta en BALANCE (con las mismas fórmulas que usa cualquier fila
 // cargada a mano) y descuenta el depósito de origen en STOCK. NO toca CAJA:
 // eso sólo pasa cuando se registre el cobro correspondiente.
+// ── NOTIFICACIONES POR TELEGRAM ──────────────────────────────────────
+// Configuración en Project Settings → Script Properties (NO acá en el código,
+// para no dejar el token del bot guardado en el repo de GitHub):
+//   TELEGRAM_BOT_TOKEN   → el token que te da BotFather
+//   TELEGRAM_CHAT_IDS    → chat_id de cada persona que quiera recibir avisos,
+//                          separados por coma (ej: "111111111,222222222")
+// Si estas propiedades no están configuradas, enviarTelegram() no hace nada —
+// así que es seguro dejarlo desplegado aunque todavía no se haya armado el bot.
+function enviarTelegram(mensaje) {
+  var props      = PropertiesService.getScriptProperties();
+  var token      = props.getProperty('TELEGRAM_BOT_TOKEN');
+  var chatIdsStr = props.getProperty('TELEGRAM_CHAT_IDS');
+  if (!token || !chatIdsStr) return;
+
+  var chatIds = chatIdsStr.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+  chatIds.forEach(function(chatId) {
+    try {
+      UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify({ chat_id: chatId, text: mensaje, parse_mode: 'HTML' }),
+        muteHttpExceptions: true // si Telegram falla, no debe romper la operación real
+      });
+    } catch (e) {
+      // best-effort: un fallo de notificación nunca debe tumbar una venta/cobro/etc.
+    }
+  });
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// $1.234.567 con separador de miles estilo argentino, sin depender de locale
+function formatearMonto(n) {
+  var neg = n < 0;
+  var entero = String(Math.round(Math.abs(n)));
+  var out = '';
+  for (var i = 0; i < entero.length; i++) {
+    if (i > 0 && (entero.length - i) % 3 === 0) out += '.';
+    out += entero[i];
+  }
+  return (neg ? '-' : '') + out;
+}
+
+// ── UTILIDAD — correr UNA VEZ a mano para averiguar el chat_id de cada persona ──
+// Antes de correr esto, pedile a cada uno que le escriba cualquier cosa (ej. "hola")
+// al bot desde Telegram. Después elegí esta función en el desplegable y tocá ▶ Run —
+// el resultado queda en Ver → Registros (View → Logs).
+function obtenerChatIdsTelegram() {
+  var token = PropertiesService.getScriptProperties().getProperty('TELEGRAM_BOT_TOKEN');
+  if (!token) { Logger.log('Primero configurá TELEGRAM_BOT_TOKEN en Project Settings → Script Properties.'); return; }
+  var resp = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/getUpdates');
+  var data = JSON.parse(resp.getContentText());
+  if (!data.ok || !data.result.length) { Logger.log('Todavía no hay mensajes. Pedile a cada persona que le escriba algo al bot primero.'); return; }
+  data.result.forEach(function(u) {
+    var chat = u.message && u.message.chat;
+    if (chat) Logger.log('Nombre: ' + (chat.first_name || '') + ' ' + (chat.last_name || '') + ' — chat_id: ' + chat.id);
+  });
+}
+
 // Registra una transacción general en BALANCE (Venta, Retiros, Muestra, Ajuste,
 // o cualquier categoría real de costo como Tapones/Flete/Elaboracion). El signo del
 // monto se determina solo según el historial de esa categoría (getCategoriasBalance):
@@ -336,6 +397,15 @@ function addTransaccion(p) {
   if (productoSheet && botellas > 0) {
     ajustarStockUbicacion(p.producto, p.deposito || 'R Peña', null, botellas);
   }
+
+  enviarTelegram(
+    '🍾 <b>' + escapeHtml(detalle) + '</b>\n' +
+    (contacto ? 'Cliente/Proveedor: ' + escapeHtml(contacto) + '\n' : '') +
+    (productoSheet ? 'Producto: ' + escapeHtml(productoSheet) + '\n' : '') +
+    (botellas ? 'Botellas: ' + botellas + '\n' : '') +
+    (montoArs ? 'Monto: $' + formatearMonto(montoArs) + '\n' : '') +
+    'Cargado por: ' + escapeHtml(p.user || '-')
+  );
 
   return { ok: true, referencia: referencia };
 }
@@ -438,6 +508,16 @@ function addMovement(p) {
     cajaLbl,                                                // H CAJA
     p.referencia || ''                                      // I REFERENCIA (opcional → BALANCE)
   ]]);
+
+  enviarTelegram(
+    (p.tipo === 'cobro' ? '💵 <b>Cobro</b>\n' : '💸 <b>Gasto</b>\n') +
+    'Detalle: ' + escapeHtml(p.detalle || '-') + '\n' +
+    'Cliente/Proveedor: ' + escapeHtml(p.contacto || '-') + '\n' +
+    'Monto: $' + formatearMonto(monto) + '\n' +
+    'Caja: ' + escapeHtml(cajaLbl) + '\n' +
+    'Cargado por: ' + escapeHtml(p.user || '-')
+  );
+
   return { ok: true };
 }
 
@@ -449,6 +529,13 @@ function addTransfer(p) {
   var headers = ['FECHA','PRODUCTO','CANTIDAD','DESDE','HACIA','NOTAS','USUARIO','REGISTRADO'];
   var log = getOrCreateSheet(TAB_TRANSF, headers);
   log.appendRow([p.fecha, p.producto, cantidad, p.desde, p.hacia, p.notas || '', p.user, new Date()]);
+
+  enviarTelegram(
+    '🔀 <b>Transferencia de stock</b>\n' +
+    cantidad + ' bot ' + escapeHtml(p.producto) + ': ' + escapeHtml(p.desde) + ' → ' + escapeHtml(p.hacia) + '\n' +
+    'Cargado por: ' + escapeHtml(p.user || '-')
+  );
+
   return { ok: true };
 }
 
@@ -464,6 +551,19 @@ function addStockControl(p) {
     sheet.appendRow([p.fecha, p.hora, p.user, p.deposito || '', it.label, it.stock, it.real, it.diff, ahora]);
     fijarStockUbicacion(it.label, p.deposito, it.real); // corrige STOCK con lo contado de verdad
   });
+
+  var difs = items.filter(function(it) { return it.diff !== 0; });
+  var msg  = '📋 <b>Control de stock: ' + escapeHtml(p.deposito) + '</b>\n';
+  if (difs.length) {
+    msg += '⚠ Diferencias:\n' + difs.map(function(it) {
+      return '· ' + escapeHtml(it.label) + ': ' + (it.diff > 0 ? '+' : '') + it.diff + ' bot';
+    }).join('\n') + '\n';
+  } else {
+    msg += '✓ Sin diferencias\n';
+  }
+  msg += 'Cargado por: ' + escapeHtml(p.user || '-');
+  enviarTelegram(msg);
+
   return { ok: true };
 }
 
