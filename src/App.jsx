@@ -423,8 +423,8 @@ function DashboardScreen({onNavigate,price,source,productos,last,operacionesPend
   const total=productos.reduce((s,p)=>s+totalStock(p),0);
   const productosOrdenados=[...productos].sort((a,b)=>totalStock(b)-totalStock(a)); // mayor a menor, los de 0 quedan al final
   const ars=price?total*price:null; const usd=ars&&tc?Math.round(ars/tc):null;
-  const totalCajaArs=resumenCajas?.reduce((s,c)=>s+c.ars,0)||0;
-  const totalCajaUsd=resumenCajas?.reduce((s,c)=>s+c.usd,0)||0;
+  const totalCajaArs=Math.round(resumenCajas?.reduce((s,c)=>s+c.ars,0)||0);
+  const totalCajaUsd=Math.round(resumenCajas?.reduce((s,c)=>s+c.usd,0)||0);
   const daysSince=last?(()=>{try{const [d,m,y]=last.fecha.split('/');return Math.floor((Date.now()-new Date(`${y}-${m}-${d}`).getTime())/86400000);}catch{return null;}})():null;
   return(
     <div style={{padding:'20px 16px',maxWidth:540,margin:'0 auto'}}>
