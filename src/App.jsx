@@ -307,17 +307,18 @@ function StockScreen({onBack,showToast,productos,applyTransfer,user,refresh,last
 }
 
 function StockControlBody({productos,showToast,onBack,last,save,user,refresh}){
-  const productosOrdenados=[...productos].sort((a,b)=>totalStock(b)-totalStock(a)); // mayor a menor, los de 0 al final
+  const productosOrdenados=[...productos].sort((a,b)=>totalStock(b)-totalStock(a)); // orden general por stock total
   const [deposito,setDeposito]=useState(UBICACIONES[0]);
-  const [real,setReal]=useState(Object.fromEntries(productosOrdenados.map(p=>[p.id,'0'])));
-  useEffect(()=>{ setReal(Object.fromEntries(productosOrdenados.map(p=>[p.id,'0']))); },[deposito]); // no arrastrar números de otro depósito
+  const productosDeposito=productosOrdenados.filter(p=>(p.stockUbic[deposito]||0)>0); // solo los que tienen stock EN ESTE depósito
+  const [real,setReal]=useState(Object.fromEntries(productosDeposito.map(p=>[p.id,'0'])));
+  useEffect(()=>{ setReal(Object.fromEntries(productosDeposito.map(p=>[p.id,'0']))); },[deposito]); // no arrastrar números de otro depósito
   const set=(id,v)=>setReal(p=>({...p,[id]:v.replace(/\D/g,'')}));
-  const diffs=productosOrdenados.map(p=>{
+  const diffs=productosDeposito.map(p=>{
     const teorico=p.stockUbic[deposito]||0;
     const r=real[p.id]===''?null:parseInt(real[p.id]);
     return{...p,stock:teorico,real:r,diff:r!==null?r-teorico:null};
   }).filter(p=>p.real!==null);
-  const hasDiff=diffs.some(d=>d.diff!==0);const allFilled=productosOrdenados.every(p=>real[p.id]!=='');
+  const hasDiff=diffs.some(d=>d.diff!==0);const allFilled=productosDeposito.length>0&&productosDeposito.every(p=>real[p.id]!=='');
   const [sending,setSending]=useState(false);
   const confirm=async()=>{
     const ctrl={deposito,fecha:new Date().toLocaleDateString('es-AR'),hora:new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}),items:diffs};
@@ -342,11 +343,12 @@ function StockControlBody({productos,showToast,onBack,last,save,user,refresh}){
         </Sel>
       </F>
       {last&&<div style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:10,padding:'10px 14px',fontFamily:'system-ui',fontSize:12,color:C.muted,margin:'16px 0'}}>Último control: <strong style={{color:C.text}}>{last.deposito?`${last.deposito} · `:''}{last.fecha} a las {last.hora}</strong></div>}
-      <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:20,marginTop:last?0:16}}>
+      {productosDeposito.length===0&&<div style={{color:C.dim,fontSize:13,fontFamily:'system-ui',textAlign:'center',padding:'20px 0'}}>No hay stock teórico registrado en {deposito}</div>}
+      {productosDeposito.length>0&&(<div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:20,marginTop:last?0:16}}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 80px 80px 80px',gap:8,padding:'0 4px'}}>
           {['Producto','Teórico','Real','Dif.'].map(h=><div key={h} style={{fontSize:10,color:C.dim,letterSpacing:'0.1em',textTransform:'uppercase',fontFamily:'system-ui',textAlign:h!=='Producto'?'center':'left'}}>{h}</div>)}
         </div>
-        {productosOrdenados.map(p=>{
+        {productosDeposito.map(p=>{
           const stock=p.stockUbic[deposito]||0;
           const r=real[p.id]===''?null:parseInt(real[p.id]);
           const diff=r!==null?r-stock:null;
@@ -360,7 +362,7 @@ function StockControlBody({productos,showToast,onBack,last,save,user,refresh}){
             </div>
           );
         })}
-      </div>
+      </div>)}
       {diffs.some(d=>d.diff!==0&&d.diff!==null)&&(
         <div style={{background:C.wineBg,border:`1px solid ${C.wine}55`,borderRadius:12,padding:'14px 16px',marginBottom:16,fontFamily:'system-ui'}}>
           <div style={{color:'#E07080',fontSize:13,fontWeight:700,marginBottom:8}}>⚠ Diferencias detectadas en {deposito}</div>
@@ -403,7 +405,7 @@ function TransferForm({productos,applyTransfer,user,showToast,onBack,refresh}){
   };
   return(
     <div style={{display:'flex',flexDirection:'column',gap:16}}>
-      <F label="Producto *"><Sel value={f.producto} onChange={e=>set('producto',e.target.value)}><option value="">Seleccionar…</option>{productos.map(p=><option key={p.id} value={p.id}>{p.label} — {totalStock(p)} bot</option>)}</Sel></F>
+      <F label="Producto *"><Sel value={f.producto} onChange={e=>set('producto',e.target.value)}><option value="">Seleccionar…</option>{productos.filter(p=>totalStock(p)>0).map(p=><option key={p.id} value={p.id}>{p.label} — {totalStock(p)} bot</option>)}</Sel></F>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <F label="Desde *"><Sel value={f.desde} onChange={e=>set('desde',e.target.value)}><option value="">Seleccionar…</option>{UBICACIONES.map(u=><option key={u} value={u}>{u}{prod?` (${prod.stockUbic[u]||0})`:''}</option>)}</Sel></F>
         <F label="Hacia *"><Sel value={f.hacia} onChange={e=>set('hacia',e.target.value)}><option value="">Seleccionar…</option>{UBICACIONES.filter(u=>u!==f.desde).map(u=><option key={u} value={u}>{u}</option>)}</Sel></F>
@@ -421,7 +423,7 @@ function TransferForm({productos,applyTransfer,user,showToast,onBack,refresh}){
 function DashboardScreen({onNavigate,price,source,productos,last,operacionesPendientes,resumenCajas}){
   const {tc,err:tcErr,date:tcDate}=useDolarBlue();
   const total=productos.reduce((s,p)=>s+totalStock(p),0);
-  const productosOrdenados=[...productos].sort((a,b)=>totalStock(b)-totalStock(a)); // mayor a menor, los de 0 quedan al final
+  const productosOrdenados=[...productos].filter(p=>totalStock(p)>0).sort((a,b)=>totalStock(b)-totalStock(a)); // solo con stock, mayor a menor
   const ars=price?total*price:null; const usd=ars&&tc?Math.round(ars/tc):null;
   const totalCajaArs=Math.round(resumenCajas?.reduce((s,c)=>s+c.ars,0)||0);
   const totalCajaUsd=Math.round(resumenCajas?.reduce((s,c)=>s+c.usd,0)||0);
@@ -456,7 +458,7 @@ function DashboardScreen({onNavigate,price,source,productos,last,operacionesPend
       <SL>Stock por depósito</SL>
       <Card style={{marginBottom:14}}>
         <div style={{display:'flex',flexDirection:'column',gap:10}}>
-          {productosOrdenados.filter(p=>totalStock(p)>0).map(p=>(
+          {productosOrdenados.map(p=>(
             <div key={p.id}>
               <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:5}}><div style={{width:8,height:8,borderRadius:2,background:p.hex,flexShrink:0}}/><span style={{color:C.text,fontSize:12,fontFamily:'system-ui',fontWeight:600}}>{p.label}</span></div>
               <div style={{display:'flex',flexWrap:'wrap',gap:6,paddingLeft:14}}>
@@ -602,7 +604,7 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
         <F label={`Producto${requiereStock?' *':' (opcional)'}`}>
           <Sel value={f.producto} onChange={e=>set('producto',e.target.value)}>
             <option value="">Seleccionar…</option>
-            {productos.filter(p=>!requiereStock||totalStock(p)>0).map(p=><option key={p.id} value={p.id}>{p.label}{totalStock(p)>0?` — ${totalStock(p).toLocaleString('es-AR')} bot`:''}</option>)}
+            {productos.filter(p=>totalStock(p)>0).map(p=><option key={p.id} value={p.id}>{p.label} — {totalStock(p).toLocaleString('es-AR')} bot</option>)}
           </Sel>
         </F>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>

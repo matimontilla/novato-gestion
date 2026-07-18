@@ -276,17 +276,17 @@ function escribirFormulasBalance(row) {
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   balance.getRange(row, 6).setValue('=RIGHT(E' + row + ';4)'); // F AÑADA
   balance.getRange(row, 8, 1, 4).setValues([[
-    '=G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1)', // H MONTO US$ FF
-    '=H' + row + '+P' + row,                                                               // I MONTO US$ FP
+    '=IF(G' + row + '=0;"";G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1))', // H MONTO US$ FF
+    '=IF(G' + row + '=0;"";H' + row + '+P' + row + ')',                                                          // I MONTO US$ FP
     '=IF(G' + row + '=0;"";IF(G' + row + '>0;G' + row + '/M' + row + ';G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))', // J CU $ (venta: valor unitario · gasto: costo por producción total · sin monto: vacío)
     '=IF(G' + row + '=0;"";IF(G' + row + '>0;H' + row + '/M' + row + ';H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'  // K CU US$ (misma lógica en dólares)
   ]]);
   balance.getRange(row, 14).setValue('=IF(G' + row + '>0;"Ingreso";(IF(G' + row + '=0;"Movimiento";"Egreso")))'); // N CONCEPTO
   balance.getRange(row, 15, 1, 4).setValues([[
-    '=G' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$F$3:$F)',                         // O SALDO $ (rango abierto)
-    '=-(H' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$G$3:$G))',                      // P SALDO US$
-    '=IF(N' + row + '="Egreso";-P' + row + '/H' + row + ';P' + row + '/H' + row + ')',    // Q % DIF POR TC
-    '=IF(BALANCE!$B' + row + '="";"";YEAR(BALANCE!$B' + row + '))'                         // R AÑO
+    '=IF(G' + row + '=0;"";G' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$F$3:$F))',                         // O SALDO $ (rango abierto)
+    '=IF(G' + row + '=0;"";-(H' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$G$3:$G)))',                      // P SALDO US$
+    '=IF(G' + row + '=0;"";IF(N' + row + '="Egreso";-P' + row + '/H' + row + ';P' + row + '/H' + row + '))',     // Q % DIF POR TC
+    '=IF(BALANCE!$B' + row + '="";"";YEAR(BALANCE!$B' + row + '))'                                                // R AÑO
   ]]);
 }
 
@@ -784,16 +784,16 @@ function repararTodasLasFormulas() {
     grupo.forEach(function(row) {
       colF.push(['=RIGHT(E' + row + ';4)']);
       colHK.push([
-        '=G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1)',
-        '=H' + row + '+P' + row,
+        '=IF(G' + row + '=0;"";G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1))',
+        '=IF(G' + row + '=0;"";H' + row + '+P' + row + ')',
         '=IF(G' + row + '=0;"";IF(G' + row + '>0;G' + row + '/M' + row + ';G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))',
         '=IF(G' + row + '=0;"";IF(G' + row + '>0;H' + row + '/M' + row + ';H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'
       ]);
       colN.push(['=IF(G' + row + '>0;"Ingreso";(IF(G' + row + '=0;"Movimiento";"Egreso")))']);
       colOR.push([
-        '=G' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$F$3:$F)',
-        '=-(H' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$G$3:$G))',
-        '=IF(N' + row + '="Egreso";-P' + row + '/H' + row + ';P' + row + '/H' + row + ')',
+        '=IF(G' + row + '=0;"";G' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$F$3:$F))',
+        '=IF(G' + row + '=0;"";-(H' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$G$3:$G)))',
+        '=IF(G' + row + '=0;"";IF(N' + row + '="Egreso";-P' + row + '/H' + row + ';P' + row + '/H' + row + '))',
         '=IF(BALANCE!$B' + row + '="";"";YEAR(BALANCE!$B' + row + '))'
       ]);
     });
