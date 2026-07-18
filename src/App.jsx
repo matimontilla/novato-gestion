@@ -451,7 +451,25 @@ function DashboardScreen({onNavigate,price,source,productos,last,operacionesPend
       <SL>Stock por producto</SL>
       <Card style={{marginBottom:14}}>
         <div style={{display:'flex',gap:8,alignItems:'flex-end',height:110,marginBottom:10}}>
-          {productosOrdenados.map(p=>{const stock=totalStock(p);const pct=p.max>0?stock/p.max:0;const h=Math.max(Math.round(pct*90),stock>0?4:2);return(<div key={p.id} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:4}}><div style={{fontSize:9,color:stock>0?C.muted:C.dim,fontFamily:'system-ui',minHeight:13}}>{stock>0?stock.toLocaleString('es-AR'):''}</div><div style={{width:'100%',display:'flex',flexDirection:'column',alignItems:'center'}}><div style={{width:'35%',height:13,background:C.cork,borderRadius:'3px 3px 0 0',border:`1px solid ${C.border}`,borderBottom:'none'}}/><div style={{width:'100%',height:80,background:C.cork,borderRadius:'2px 2px 6px 6px',border:`1px solid ${C.border}`,overflow:'hidden',display:'flex',alignItems:'flex-end'}}><div style={{width:'100%',height:`${h}px`,background:stock>0?p.hex:C.cork,transition:'height 0.8s cubic-bezier(.4,0,.2,1)'}}/></div></div></div>);})}
+          {productosOrdenados.map(p=>{
+            const stock=totalStock(p);const pct=p.max>0?stock/p.max:0;const h=Math.max(Math.round(pct*84),stock>0?4:2);
+            const barril="M16,4 L48,4 Q60,4 60,20 Q64,48 60,76 Q60,92 48,92 L16,92 Q4,92 4,76 Q0,48 4,20 Q4,4 16,4 Z";
+            return(
+              <div key={p.id} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:4}}>
+                <div style={{fontSize:9,color:stock>0?C.muted:C.dim,fontFamily:'system-ui',minHeight:13}}>{stock>0?stock.toLocaleString('es-AR'):''}</div>
+                <svg viewBox="0 0 64 96" width="100%" height="82" style={{overflow:'visible'}}>
+                  <defs><clipPath id={`barril-${p.id}`}><path d={barril}/></clipPath></defs>
+                  <path d={barril} fill={C.cork}/>
+                  <g clipPath={`url(#barril-${p.id})`}>
+                    <rect x="0" y={92-h} width="64" height={h} fill={stock>0?p.hex:C.cork} style={{transition:'y 0.8s cubic-bezier(.4,0,.2,1), height 0.8s cubic-bezier(.4,0,.2,1)'}}/>
+                  </g>
+                  <path d={barril} fill="none" stroke={C.border} strokeWidth="1.5"/>
+                  <line x1="3" y1="30" x2="61" y2="30" stroke={C.border} strokeWidth="1"/>
+                  <line x1="3" y1="66" x2="61" y2="66" stroke={C.border} strokeWidth="1"/>
+                </svg>
+              </div>
+            );
+          })}
         </div>
         <div style={{display:'flex',gap:8}}>{productosOrdenados.map(p=><div key={p.id} style={{flex:1,textAlign:'center'}}><div style={{fontSize:8,color:totalStock(p)>0?C.muted:C.dim,fontFamily:'system-ui',lineHeight:1.3}}>{p.label.split(' ').map((w,i)=><span key={i}>{w}<br/></span>)}</div></div>)}</div>
       </Card>
