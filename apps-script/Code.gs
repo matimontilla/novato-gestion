@@ -252,16 +252,41 @@ function prefijoCliente(nombre) {
 
 // Busca el producto de la fila de BALANCE que tenga esta REFERENCIA — se usa para
 // que un cobro/gasto vinculado herede el producto de la operación original.
-function buscarProductoPorReferencia(referencia) {
-  if (!referencia) return '';
+// Todas las líneas de BALANCE que comparten una REFERENCIA (una operación puede
+// tener varios productos = varias filas). Se usa tanto para heredar el producto en
+// CAJA como para repartir proporcionalmente un cobro/gasto entre varias líneas.
+function buscarLineasPorReferencia(referencia) {
+  if (!referencia) return [];
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   var lastRow = balance.getLastRow();
-  if (lastRow < 3) return '';
-  var data = balance.getRange(3, 5, lastRow - 2, 8).getValues(); // E..L: PRODUCTO ... REFERENCIA
+  if (lastRow < 3) return [];
+  var data = balance.getRange(3, 5, lastRow - 2, 8).getValues(); // E..L: PRODUCTO,AÑADA,MONTO$,...,REFERENCIA
+  var out = [];
   for (var i = 0; i < data.length; i++) {
-    if (data[i][7] === referencia) return data[i][0] || '';
+    if (data[i][7] === referencia) out.push({ producto: data[i][0] || '', monto: Math.abs(Number(data[i][2]) || 0) });
   }
-  return '';
+  return out;
+}
+
+// Reparte un monto total proporcionalmente según una lista de "pesos" (ej. el monto
+// de cada línea de la venta original), redondeando al peso y ajustando la ÚLTIMA
+// parte para que la suma cierre exacto (sin dejar residuos de centavos sueltos).
+function repartirProporcional(total, pesos) {
+  var sumaPesos = pesos.reduce(function(a, b) { return a + Math.abs(b); }, 0);
+  var signoTotal = total < 0 ? -1 : 1;
+  var totalAbs = Math.round(Math.abs(total));
+
+  if (!sumaPesos) {
+    // Sin base para prorratear (ej. todas las líneas en 0): todo va a la primera parte
+    var partesIguales = pesos.map(function() { return 0; });
+    if (partesIguales.length) partesIguales[0] = totalAbs * signoTotal;
+    return partesIguales;
+  }
+
+  var partes = pesos.map(function(w) { return Math.round(totalAbs * (Math.abs(w) / sumaPesos)); });
+  var sumaPartes = partes.reduce(function(a, b) { return a + b; }, 0);
+  partes[partes.length - 1] += (totalAbs - sumaPartes); // ajuste de redondeo en la última línea
+  return partes.map(function(p) { return p * signoTotal; });
 }
 
 function nextReferencia(prefix) {
@@ -286,22 +311,30 @@ function nextReferencia(prefix) {
 // filas nuevas (addTransaccion) como para reparar filas rotas (repararBalance). IMPORTANTE:
 // este Sheet usa configuración regional en español → los argumentos de función van
 // separados por PUNTO Y COMA (;), no coma. Escribir con comas produce #ERROR!.
-function escribirFormulasBalance(row) {
+// incluirSaldo=false se usa para filas que comparten referencia con otras (multi-
+// producto, o costos prorrateados tipo CCI22-001): el saldo se maneja agregado por
+// referencia en getVentasPendientes/getComprasPendientes, no fila por fila.
+function escribirFormulasBalance(row, incluirSaldo) {
+  if (incluirSaldo === undefined) incluirSaldo = true;
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   balance.getRange(row, 6).setValue('=RIGHT(E' + row + ';4)'); // F AÑADA
   balance.getRange(row, 8, 1, 4).setValues([[
     '=IF(G' + row + '=0;"";G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1))', // H MONTO US$ FF
-    '=IF(G' + row + '=0;"";H' + row + '+P' + row + ')',                                                          // I MONTO US$ FP
-    '=IF(G' + row + '=0;"";IF(G' + row + '>0;G' + row + '/M' + row + ';G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))', // J CU $ (venta: valor unitario · gasto: costo por producción total · sin monto: vacío)
-    '=IF(G' + row + '=0;"";IF(G' + row + '>0;H' + row + '/M' + row + ';H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'  // K CU US$ (misma lógica en dólares)
+    incluirSaldo ? '=IF(G' + row + '=0;"";H' + row + '+P' + row + ')' : '',                                       // I MONTO US$ FP
+    '=IF(G' + row + '=0;"";IF(G' + row + '>0;G' + row + '/M' + row + ';G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))', // J CU $
+    '=IF(G' + row + '=0;"";IF(G' + row + '>0;H' + row + '/M' + row + ';H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'  // K CU US$
   ]]);
   balance.getRange(row, 14).setValue('=IF(G' + row + '>0;"Ingreso";(IF(G' + row + '=0;"Movimiento";"Egreso")))'); // N CONCEPTO
-  balance.getRange(row, 15, 1, 4).setValues([[
-    '=IF(G' + row + '=0;"";G' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$F$3:$F))',                         // O SALDO $ (rango abierto)
-    '=IF(G' + row + '=0;"";-(H' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$G$3:$G)))',                      // P SALDO US$
-    '=IF(G' + row + '=0;"";IF(N' + row + '="Egreso";-P' + row + '/H' + row + ';P' + row + '/H' + row + '))',     // Q % DIF POR TC
-    '=IF(BALANCE!$B' + row + '="";"";YEAR(BALANCE!$B' + row + '))'                                                // R AÑO
-  ]]);
+  if (incluirSaldo) {
+    balance.getRange(row, 15, 1, 3).setValues([[
+      '=IF(G' + row + '=0;"";G' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$F$3:$F))',                     // O SALDO $
+      '=IF(G' + row + '=0;"";-(H' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$G$3:$G)))',                  // P SALDO US$
+      '=IF(G' + row + '=0;"";IF(N' + row + '="Egreso";-P' + row + '/H' + row + ';P' + row + '/H' + row + '))' // Q % DIF POR TC
+    ]]);
+  } else {
+    balance.getRange(row, 15, 1, 3).setValues([['', '', '']]);
+  }
+  balance.getRange(row, 18).setValue('=IF(BALANCE!$B' + row + '="";"";YEAR(BALANCE!$B' + row + '))'); // R AÑO
 }
 
 // Registra la venta en BALANCE (con las mismas fórmulas que usa cualquier fila
@@ -369,55 +402,71 @@ function obtenerChatIdsTelegram() {
 }
 
 // Registra una transacción general en BALANCE (Venta, Retiros, Muestra, Ajuste,
-// o cualquier categoría real de costo como Tapones/Flete/Elaboracion). El signo del
-// monto se determina solo según el historial de esa categoría (getCategoriasBalance):
-// Ingreso→positivo, Egreso→negativo, Neutro→tal cual se tipeó (Retiros/Muestra suelen
-// ir en 0, sin plata de por medio). Descuenta stock sólo si vienen producto Y botellas.
+// o cualquier categoría real de costo como Tapones/Flete/Elaboracion). Puede tener
+// una o varias líneas de producto (p.lineas, JSON: [{producto,deposito,botellas,monto}]),
+// todas bajo la MISMA referencia. El signo del monto se determina solo según el
+// historial de esa categoría (getCategoriasBalance): Ingreso→positivo, Egreso→negativo,
+// Neutro→tal cual se tipeó. Con más de una línea, el saldo de cada fila individual
+// queda en blanco — se maneja agregado por referencia (getVentasPendientes/
+// getComprasPendientes), no fila por fila, igual que los costos prorrateados.
 function addTransaccion(p) {
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   if (!balance) throw new Error('No se encontró la pestaña BALANCE');
 
-  var detalle       = p.detalle || 'Venta';
-  var productoSheet = p.producto ? (PRODUCTO_APP_TO_SHEET[p.producto] || p.producto) : '';
-  var botellas      = parseInt(p.botellas) || 0;
-  var contacto       = p.contacto || '';
+  var detalle  = p.detalle || 'Venta';
+  var contacto = p.contacto || '';
+  var lineas   = JSON.parse(p.lineas || '[]');
+  if (!lineas.length) throw new Error('No hay líneas de producto para registrar');
 
   var categorias = getCategoriasBalance();
   var cat  = categorias.filter(function(c) { return c.detalle === detalle; })[0];
   var tipo = cat ? cat.tipo : 'Ingreso'; // categoría nunca vista antes → asumimos Ingreso
 
-  var montoTipeado = parseFloat(p.monto) || 0;
-  var montoArs;
-  if (tipo === 'Egreso') montoArs = -Math.abs(montoTipeado);
-  else if (tipo === 'Ingreso') montoArs = Math.abs(montoTipeado);
-  else montoArs = montoTipeado; // Neutro: tal cual (Retiros/Muestra suelen quedar en 0)
-
   var referencia = nextReferencia(prefijoCliente(contacto || detalle));
-  var ultimaReal  = obtenerUltimaFilaConFecha(balance, 2); // B = FECHA
-  balance.insertRowAfter(ultimaReal);
-  var row = ultimaReal + 1;
+  var multiLinea = lineas.length > 1;
+  var resumenTelegram = [];
 
-  balance.getRange(row, 2).setValue(parseFechaApp(p.fecha)); // B FECHA
-  balance.getRange(row, 3).setValue(detalle);                // C DETALLE
-  balance.getRange(row, 4).setValue(contacto);                // D SUBDETALLE
-  balance.getRange(row, 5).setValue(productoSheet);           // E PRODUCTO
-  balance.getRange(row, 7).setValue(montoArs);                // G MONTO $
-  balance.getRange(row, 12).setValue(referencia);             // L REFERENCIA
-  balance.getRange(row, 13).setValue(botellas);               // M BOTELLAS
-  balance.getRange(row, 1).setValue(p.user || '');            // A: quién lo cargó
+  lineas.forEach(function(linea) {
+    var productoSheet = linea.producto ? (PRODUCTO_APP_TO_SHEET[linea.producto] || linea.producto) : '';
+    var botellas      = parseInt(linea.botellas) || 0;
+    var montoTipeado  = parseFloat(linea.monto) || 0;
+    var montoArs;
+    if (tipo === 'Egreso') montoArs = -Math.abs(montoTipeado);
+    else if (tipo === 'Ingreso') montoArs = Math.abs(montoTipeado);
+    else montoArs = montoTipeado; // Neutro: tal cual (Retiros/Muestra suelen quedar en 0)
 
-  escribirFormulasBalance(row);
+    var ultimaReal = obtenerUltimaFilaConFecha(balance, 2); // B = FECHA
+    balance.insertRowAfter(ultimaReal);
+    var row = ultimaReal + 1;
 
-  if (productoSheet && botellas > 0) {
-    ajustarStockUbicacion(p.producto, p.deposito || 'R Peña', null, botellas);
-  }
+    balance.getRange(row, 2).setValue(parseFechaApp(p.fecha)); // B FECHA
+    balance.getRange(row, 3).setValue(detalle);                // C DETALLE
+    balance.getRange(row, 4).setValue(contacto);                // D SUBDETALLE
+    balance.getRange(row, 5).setValue(productoSheet);           // E PRODUCTO
+    balance.getRange(row, 7).setValue(montoArs);                // G MONTO $
+    balance.getRange(row, 12).setValue(referencia);             // L REFERENCIA (compartida entre líneas)
+    balance.getRange(row, 13).setValue(botellas);               // M BOTELLAS
+    balance.getRange(row, 1).setValue(p.user || '');            // A: quién lo cargó
 
+    escribirFormulasBalance(row, !multiLinea);
+
+    if (productoSheet && botellas > 0) {
+      ajustarStockUbicacion(linea.producto, linea.deposito || 'R Peña', null, botellas);
+    }
+
+    resumenTelegram.push(
+      (productoSheet ? productoSheet : '') +
+      (botellas ? ' · ' + botellas + ' bot' : '') +
+      (montoArs ? ' · $' + formatearMonto(montoArs) : '')
+    );
+  });
+
+  var montoTotal = lineas.reduce(function(s, l) { return s + (parseFloat(l.monto) || 0); }, 0);
   enviarTelegram(
-    '🍾 <b>' + escapeHtml(detalle) + '</b>\n' +
+    '🍾 <b>' + escapeHtml(detalle) + '</b>' + (multiLinea ? ' (' + lineas.length + ' productos)' : '') + '\n' +
     (contacto ? 'Cliente/Proveedor: ' + escapeHtml(contacto) + '\n' : '') +
-    (productoSheet ? 'Producto: ' + escapeHtml(productoSheet) + '\n' : '') +
-    (botellas ? 'Botellas: ' + botellas + '\n' : '') +
-    (montoArs ? 'Monto: $' + formatearMonto(montoArs) + '\n' : '') +
+    resumenTelegram.map(function(l) { return '· ' + escapeHtml(l); }).join('\n') + '\n' +
+    (montoTotal ? 'Total: $' + formatearMonto(montoTotal) + '\n' : '') +
     'Cargado por: ' + escapeHtml(p.user || '-')
   );
 
@@ -426,54 +475,102 @@ function addTransaccion(p) {
 
 // Ventas con saldo pendiente de cobro — para que la pantalla de Caja pueda
 // vincular un cobro a la venta correspondiente y la reconciliación se cierre sola.
+// Suma todo lo pagado en CAJA por cada REFERENCIA (una sola pasada sobre CAJA) —
+// funciona igual sin importar si esa referencia tiene 1 fila en CAJA o varias
+// (operación multi-producto repartida proporcionalmente).
+function getTotalPagadoPorReferencia() {
+  var caja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CAJA');
+  var out = {};
+  if (!caja) return out;
+  var lastRow = caja.getLastRow();
+  if (lastRow < 3) return out;
+  var data = caja.getRange(3, 6, lastRow - 2, 4).getValues(); // F..I: MONTO $, MONTO US$, CAJA, REFERENCIA
+  for (var i = 0; i < data.length; i++) {
+    var ref = data[i][3]; // I REFERENCIA
+    if (!ref) continue;
+    if (!out[ref]) out[ref] = { ars: 0, usd: 0 };
+    out[ref].ars += Number(data[i][0]) || 0; // F MONTO $
+    out[ref].usd += Number(data[i][1]) || 0; // G MONTO US$
+  }
+  return out;
+}
+
+// Ventas con saldo pendiente de cobro — agrupadas por REFERENCIA (una operación
+// puede tener varios productos = varias filas de BALANCE compartiendo el código).
+// El saldo es el TOTAL de la operación menos lo ya cobrado en CAJA bajo esa referencia.
 function getVentasPendientes() {
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   if (!balance) return [];
   var lastRow = balance.getLastRow();
   if (lastRow < 3) return [];
   var data = balance.getRange(3, 2, lastRow - 2, 15).getValues(); // B..P
-  var out = [];
+
+  var grupos = {}; // referencia -> {cliente, producto:[], fecha, montoArs, montoUsd}
   for (var i = 0; i < data.length; i++) {
     var r = data[i];
-    if (r[1] !== 'Venta' || !r[10]) continue; // C DETALLE, L REFERENCIA (sin referencia no se puede vincular)
-    var saldoArs = r[13];                // O SALDO $
-    if (!saldoArs || Math.round(saldoArs) === 0) continue; // ignorar residuos de redondeo (ej. 0.003) que ya están saldados
+    if (r[1] !== 'Venta' || !r[10]) continue; // C DETALLE, L REFERENCIA
+    var ref = r[10];
+    if (!grupos[ref]) grupos[ref] = { cliente: r[2], producto: [], fecha: r[0], montoArs: 0, montoUsd: 0 };
+    grupos[ref].montoArs += Number(r[5]) || 0; // G MONTO $
+    grupos[ref].montoUsd += Number(r[6]) || 0; // H MONTO US$ FF
+    if (r[3]) grupos[ref].producto.push(r[3]); // E PRODUCTO
+  }
+
+  var pagos = getTotalPagadoPorReferencia();
+  var out = [];
+  for (var ref2 in grupos) {
+    var g = grupos[ref2];
+    var pagado = pagos[ref2] || { ars: 0, usd: 0 };
+    var saldoArs = Math.round(g.montoArs - pagado.ars);
+    if (!saldoArs) continue; // ya saldado (o residuo de redondeo)
     out.push({
-      referencia: r[10],                 // L
-      cliente:    r[2],                  // D
-      producto:   r[3],                  // E
-      fecha:      r[0],                  // B
-      saldoArs:   Math.round(saldoArs),
-      saldoUsd:   Math.round(r[14] || 0) // P
+      referencia: ref2,
+      cliente:    g.cliente,
+      producto:   g.producto.join(', '),
+      fecha:      g.fecha,
+      saldoArs:   saldoArs,
+      saldoUsd:   Math.round(g.montoUsd - pagado.usd)
     });
   }
   return out;
 }
 
 // Compras/costos (Tapones, Flete, Elaboracion, Uva, etc.) con saldo pendiente de
-// pago — mismo mecanismo que getVentasPendientes, pero del lado "Egreso" en vez de
-// "Ingreso". CONCEPTO ya distingue esto automáticamente para cualquier fila de
-// BALANCE (no sólo Ventas), así que no hace falta listar categorías a mano.
+// pago — mismo mecanismo que getVentasPendientes (agrupado por referencia), pero
+// del lado "Egreso" en vez de "Ingreso".
 function getComprasPendientes() {
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   if (!balance) return [];
   var lastRow = balance.getLastRow();
   if (lastRow < 3) return [];
   var data = balance.getRange(3, 2, lastRow - 2, 15).getValues(); // B..P
-  var out = [];
+
+  var grupos = {}; // referencia -> {detalle, proveedor, producto:[], fecha, montoArs, montoUsd}
   for (var i = 0; i < data.length; i++) {
     var r = data[i];
     if (r[12] !== 'Egreso' || !r[10]) continue; // N CONCEPTO, L REFERENCIA
-    var saldoArs = r[13];                       // O SALDO $
-    if (!saldoArs || Math.round(saldoArs) === 0) continue; // ignorar residuos de redondeo (ej. 0.003) que ya están saldados
+    var ref = r[10];
+    if (!grupos[ref]) grupos[ref] = { detalle: r[1], proveedor: r[2] || '', producto: [], fecha: r[0], montoArs: 0, montoUsd: 0 };
+    grupos[ref].montoArs += Number(r[5]) || 0; // G MONTO $
+    grupos[ref].montoUsd += Number(r[6]) || 0; // H MONTO US$ FF
+    if (r[3]) grupos[ref].producto.push(r[3]); // E PRODUCTO
+  }
+
+  var pagos = getTotalPagadoPorReferencia();
+  var out = [];
+  for (var ref2 in grupos) {
+    var g = grupos[ref2];
+    var pagado = pagos[ref2] || { ars: 0, usd: 0 };
+    var saldoArs = Math.round(g.montoArs - pagado.ars);
+    if (!saldoArs) continue;
     out.push({
-      referencia: r[10],                        // L
-      detalle:    r[1],                         // C
-      proveedor:  r[2] || '',                   // D SUBDETALLE
-      producto:   r[3],                         // E
-      fecha:      r[0],                         // B
-      saldoArs:   Math.round(saldoArs),
-      saldoUsd:   Math.round(r[14] || 0)        // P
+      referencia: ref2,
+      detalle:    g.detalle,
+      proveedor:  g.proveedor,
+      producto:   g.producto.join(', '),
+      fecha:      g.fecha,
+      saldoArs:   saldoArs,
+      saldoUsd:   Math.round(g.montoUsd - pagado.usd)
     });
   }
   return out;
@@ -498,37 +595,52 @@ function getOperacionesPendientes() {
 }
 
 // ── MOVIMIENTOS DE CAJA → CAJA ────────────────────────────────────────
-// p.referencia es opcional: si viene, vincula el cobro/pago con una venta de
-// BALANCE (misma REFERENCIA) para que su SALDO se actualice solo.
+// p.referencia es opcional: si viene, vincula el cobro/pago con una operación de
+// BALANCE (misma REFERENCIA) para que su saldo se actualice solo. Si esa operación
+// tiene varios productos, el monto se reparte proporcionalmente entre una fila de
+// CAJA por producto (mismo patrón que BALANCE), en vez de una sola fila ambigua.
 function addMovement(p) {
   var caja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CAJA');
   if (!caja) throw new Error('No se encontró la pestaña CAJA');
 
-  var signo   = p.tipo === 'gasto' ? -1 : 1;
-  var monto   = (parseFloat(p.monto) || 0) * signo;
-  var cajaLbl = CAJA_LABELS[p.caja] || p.caja;
-  var producto = p.referencia ? buscarProductoPorReferencia(p.referencia) : '';
+  var signo      = p.tipo === 'gasto' ? -1 : 1;
+  var montoTotal = (parseFloat(p.monto) || 0) * signo;
+  var cajaLbl    = CAJA_LABELS[p.caja] || p.caja;
+
+  var lineas = p.referencia ? buscarLineasPorReferencia(p.referencia) : [];
+  var montos, productos;
+  if (lineas.length > 1) {
+    montos    = repartirProporcional(montoTotal, lineas.map(function(l) { return l.monto; }));
+    productos = lineas.map(function(l) { return l.producto; });
+  } else {
+    montos    = [montoTotal];
+    productos = [lineas.length === 1 ? lineas[0].producto : ''];
+  }
 
   var ultimaReal = obtenerUltimaFilaConFecha(caja, 2); // B = FECHA
-  caja.insertRowAfter(ultimaReal);
-  var row = ultimaReal + 1;
-  caja.getRange(row, 1, 1, 9).setValues([[
-    p.user || '',                                          // A: quién lo cargó
-    parseFechaApp(p.fecha),                                // B FECHA
-    p.detalle || (p.tipo === 'cobro' ? 'Cobro' : 'Gasto'),  // C DETALLE
-    p.contacto || '',                                       // D SUBDETALLE
-    producto,                                               // E PRODUCTO (heredado de la operación vinculada, si hay)
-    monto,                                                  // F MONTO $
-    '=F' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1)', // G MONTO US$ (misma fórmula que el resto de la columna)
-    cajaLbl,                                                // H CAJA
-    p.referencia || ''                                      // I REFERENCIA (opcional → BALANCE)
-  ]]);
+  montos.forEach(function(monto, i) {
+    caja.insertRowAfter(ultimaReal);
+    var row = ultimaReal + 1;
+    ultimaReal = row; // la próxima línea se inserta justo debajo de esta
+    caja.getRange(row, 1, 1, 9).setValues([[
+      p.user || '',                                          // A: quién lo cargó
+      parseFechaApp(p.fecha),                                // B FECHA
+      p.detalle || (p.tipo === 'cobro' ? 'Cobro' : 'Gasto'),  // C DETALLE
+      p.contacto || '',                                       // D SUBDETALLE
+      productos[i] || '',                                     // E PRODUCTO (heredado de la operación vinculada, si hay)
+      monto,                                                  // F MONTO $
+      '=F' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1)', // G MONTO US$
+      cajaLbl,                                                // H CAJA
+      p.referencia || ''                                      // I REFERENCIA (opcional → BALANCE)
+    ]]);
+  });
 
   enviarTelegram(
     (p.tipo === 'cobro' ? '💵 <b>Cobro</b>\n' : '💸 <b>Gasto</b>\n') +
     'Detalle: ' + escapeHtml(p.detalle || '-') + '\n' +
     'Cliente/Proveedor: ' + escapeHtml(p.contacto || '-') + '\n' +
-    'Monto: $' + formatearMonto(monto) + '\n' +
+    (lineas.length > 1 ? 'Repartido entre ' + lineas.length + ' productos\n' : '') +
+    'Monto: $' + formatearMonto(montoTotal) + '\n' +
     'Caja: ' + escapeHtml(cajaLbl) + '\n' +
     'Cargado por: ' + escapeHtml(p.user || '-')
   );

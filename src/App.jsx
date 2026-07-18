@@ -556,10 +556,14 @@ function DashboardScreen({onNavigate,price,source,productos,last,operacionesPend
 // ── NUEVA VENTA ──────────────────────────────────────────────────────────
 function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clientes,categorias,contactosBalance,refresh}){
   const hoy=new Date().toISOString().split('T')[0];
-  const [f,setF]=useState({detalle:'Venta',producto:'',botellas:'',contacto:'',contactoNuevo:'',canal:'',monto:'',fecha:hoy,deposito:''});
+  const lineaVacia={producto:'',deposito:'',botellas:'',monto:''};
+  const [f,setF]=useState({detalle:'Venta',contacto:'',contactoNuevo:'',canal:'',fecha:hoy,lineas:[{...lineaVacia}]});
   const [sending,setSending]=useState(false);
   const set=(k,v)=>setF(p=>({...p,[k]:v}));
-  const prod=productos.find(p=>p.id===f.producto);
+  const setLinea=(idx,campo,valor)=>setF(p=>{const lineas=[...p.lineas];lineas[idx]={...lineas[idx],[campo]:valor};return{...p,lineas};});
+  const agregarLinea=()=>setF(p=>({...p,lineas:[...p.lineas,{...lineaVacia}]}));
+  const quitarLinea=(idx)=>setF(p=>({...p,lineas:p.lineas.filter((_,i)=>i!==idx)}));
+
   const esVenta=f.detalle==='Venta';
   const catInfo=categorias?.find(c=>c.detalle===f.detalle);
   const tipoBadge=catInfo?.tipo||'Ingreso';
@@ -571,26 +575,37 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
     setF(p=>({...p, contacto:nombre, canal: clientes?.find(c=>c.nombre===nombre)?.canal || p.canal }));
   };
 
-  const sug=esVenta&&price&&f.botellas?price*parseInt(f.botellas||0):null;
-  const requiereStock=parseInt(f.botellas||0)>0;
-  const disponibleEnDeposito=prod&&f.deposito?(prod.stockUbic[f.deposito]||0):null;
+  const totalMonto=f.lineas.reduce((s,l)=>s+(parseFloat(l.monto)||0),0);
 
   const submit=async()=>{
     if(!f.detalle||!f.contacto||(f.contacto==='Nuevo…'&&!f.contactoNuevo)){showToast('Completá los campos obligatorios','error');return;}
-    if(requiereStock&&(!f.producto||!f.deposito)){showToast('Con botellas, indicá producto y depósito','error');return;}
-    const cant=parseInt(f.botellas)||0;
-    if(requiereStock&&disponibleEnDeposito!==null&&cant>disponibleEnDeposito){showToast(`Sólo hay ${disponibleEnDeposito} bot en ${f.deposito}`,'error');return;}
+    for(const l of f.lineas){
+      const cant=parseInt(l.botellas)||0;
+      if(cant>0&&(!l.producto||!l.deposito)){showToast('Con botellas, cada línea necesita producto y depósito','error');return;}
+      if(cant>0){
+        const prod=productos.find(p=>p.id===l.producto);
+        const disponible=prod?(prod.stockUbic[l.deposito]||0):0;
+        if(cant>disponible){showToast(`Sólo hay ${disponible} bot de ${prod?.label} en ${l.deposito}`,'error');return;}
+      }
+    }
     const ct=f.contacto==='Nuevo…'?f.contactoNuevo:f.contacto;
     setSending(true);
     try {
       let referencia='';
+      const lineasEnvio=f.lineas.map(l=>{
+        const prod=productos.find(p=>p.id===l.producto);
+        return {producto:prod?.label||'',deposito:l.deposito,botellas:parseInt(l.botellas)||0,monto:l.monto||0};
+      });
       if(GAS_URL){
-        const r=await gasGet({action:'addTransaccion',fecha:f.fecha,detalle:f.detalle,producto:prod?.label||'',botellas:cant,monto:f.monto||0,contacto:ct,canal:esVenta?(f.canal||''):'',deposito:f.deposito,user:user.nombre});
+        const r=await gasGet({action:'addTransaccion',fecha:f.fecha,detalle:f.detalle,contacto:ct,canal:esVenta?(f.canal||''):'',lineas:JSON.stringify(lineasEnvio),user:user.nombre});
         referencia=r?.referencia||'';
       }
-      if(requiereStock) applySale({productoId:f.producto,deposito:f.deposito,cantidad:cant});
-      const montoStr=f.monto?`$${parseInt(f.monto).toLocaleString('es-AR')}`:'sin monto';
-      await addOp({id:Date.now(),icon:esVenta?'🍾':'📋',desc:`${f.detalle}${cant?` · ${cant} bot`:''}${prod?` ${prod.label}`:''} → ${ct}`,monto:montoStr,fecha:new Date(f.fecha+'T12:00').toLocaleDateString('es-AR'),user:user.nombre});
+      f.lineas.forEach(l=>{
+        const cant=parseInt(l.botellas)||0;
+        if(cant>0) applySale({productoId:l.producto,deposito:l.deposito,cantidad:cant});
+      });
+      const resumen=lineasEnvio.filter(l=>l.producto).map(l=>l.producto).join(', ')||f.detalle;
+      await addOp({id:Date.now(),icon:esVenta?'🍾':'📋',desc:`${f.detalle}${lineasEnvio.length>1?` (${lineasEnvio.length} productos)`:''}: ${resumen} → ${ct}`,monto:totalMonto?`$${Math.round(totalMonto).toLocaleString('es-AR')}`:'sin monto',fecha:new Date(f.fecha+'T12:00').toLocaleDateString('es-AR'),user:user.nombre});
       if(GAS_URL) await refresh();
       showToast(`✓ ${f.detalle} registrada en BALANCE${referencia?' ('+referencia+')':''}`,'ok');
       onBack();
@@ -619,24 +634,40 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
         </F>
         {clienteInfo&&!clienteInfo.activo&&<div style={{background:C.wineBg,border:`1px solid ${C.wine}55`,borderRadius:10,padding:'8px 14px',fontFamily:'system-ui',fontSize:12,color:'#E07080'}}>⚠ {f.contacto} figura inactivo — última operación hace tiempo</div>}
         {f.contacto==='Nuevo…'&&<F label="Nombre"><Inp placeholder="Nombre o comercio" value={f.contactoNuevo} onChange={e=>set('contactoNuevo',e.target.value)}/></F>}
-        <F label={`Producto${requiereStock?' *':' (opcional)'}`}>
-          <Sel value={f.producto} onChange={e=>set('producto',e.target.value)}>
-            <option value="">Seleccionar…</option>
-            {productos.filter(p=>totalStock(p)>0).map(p=><option key={p.id} value={p.id}>{p.label} — {totalStock(p).toLocaleString('es-AR')} bot</option>)}
-          </Sel>
-        </F>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-          <F label={`Depósito${requiereStock?' *':' (opcional)'}`}>
-            <Sel value={f.deposito} onChange={e=>set('deposito',e.target.value)}>
-              <option value="">Seleccionar…</option>
-              {UBICACIONES.filter(u=>!prod||(prod.stockUbic[u]||0)>0).map(u=><option key={u} value={u}>{u}{prod?` (${prod.stockUbic[u]||0})`:''}</option>)}
-            </Sel>
-          </F>
-          <F label="Botellas (opcional)"><Inp type="number" min="0" max={disponibleEnDeposito||(prod?totalStock(prod):undefined)} placeholder="0" value={f.botellas} onChange={e=>set('botellas',e.target.value)}/></F>
+
+        <div style={{display:'flex',flexDirection:'column',gap:10}}>
+          {f.lineas.map((l,idx)=>{
+            const prod=productos.find(p=>p.id===l.producto);
+            const disponible=prod&&l.deposito?(prod.stockUbic[l.deposito]||0):null;
+            const sugLinea=esVenta&&price&&l.botellas?price*parseInt(l.botellas||0):null;
+            return(
+              <div key={idx} style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:12,padding:'12px 14px',display:'flex',flexDirection:'column',gap:10}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <span style={{fontSize:11,color:C.dim,fontFamily:'system-ui',letterSpacing:'0.05em',textTransform:'uppercase'}}>Producto {f.lineas.length>1?idx+1:''}</span>
+                  {f.lineas.length>1&&<button onClick={()=>quitarLinea(idx)} style={{background:'none',border:'none',color:'#f08080',fontSize:13,cursor:'pointer',fontFamily:'system-ui'}}>Quitar ✕</button>}
+                </div>
+                <Sel value={l.producto} onChange={e=>setLinea(idx,'producto',e.target.value)}>
+                  <option value="">Seleccionar…</option>
+                  {productos.filter(p=>totalStock(p)>0).map(p=><option key={p.id} value={p.id}>{p.label} — {totalStock(p).toLocaleString('es-AR')} bot</option>)}
+                </Sel>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                  <Sel value={l.deposito} onChange={e=>setLinea(idx,'deposito',e.target.value)}>
+                    <option value="">Depósito…</option>
+                    {UBICACIONES.filter(u=>!prod||(prod.stockUbic[u]||0)>0).map(u=><option key={u} value={u}>{u}{prod?` (${prod.stockUbic[u]||0})`:''}</option>)}
+                  </Sel>
+                  <Inp type="number" min="0" max={disponible||(prod?totalStock(prod):undefined)} placeholder="Botellas" value={l.botellas} onChange={e=>setLinea(idx,'botellas',e.target.value)}/>
+                </div>
+                {sugLinea&&<div style={{fontSize:11,color:C.dim,fontFamily:'system-ui'}}>Sugerido: <strong style={{color:'#7dce9b'}}>${sugLinea.toLocaleString('es-AR')}</strong></div>}
+                <Inp type="number" placeholder="Monto ($ ARS, opcional)" value={l.monto} onChange={e=>setLinea(idx,'monto',e.target.value)}/>
+              </div>
+            );
+          })}
+          <button onClick={agregarLinea} style={{background:'none',border:`1px dashed ${C.border}`,borderRadius:10,padding:'10px',color:C.gold,fontSize:13,fontFamily:'system-ui',cursor:'pointer'}}>+ Agregar producto</button>
         </div>
+
+        {f.lineas.length>1&&<div style={{background:C.greenBg,border:`1px solid ${C.green}55`,borderRadius:10,padding:'10px 14px',fontFamily:'system-ui',fontSize:13,display:'flex',justifyContent:'space-between'}}><span style={{color:C.muted}}>Total de la operación</span><strong style={{color:'#7dce9b'}}>${Math.round(totalMonto).toLocaleString('es-AR')}</strong></div>}
+
         <F label="Fecha"><Inp type="date" value={f.fecha} onChange={e=>set('fecha',e.target.value)}/></F>
-        {sug&&<div style={{background:C.greenBg,border:`1px solid ${C.green}55`,borderRadius:10,padding:'10px 14px',fontFamily:'system-ui',fontSize:13}}><span style={{color:C.muted}}>Monto sugerido: </span><strong style={{color:'#7dce9b'}}>${sug.toLocaleString('es-AR')}</strong><span style={{color:C.dim}}> (${price.toLocaleString('es-AR')}/bot · última venta)</span></div>}
-        <F label="Monto (opcional, $ ARS)"><Inp type="number" placeholder="0" value={f.monto} onChange={e=>set('monto',e.target.value)}/></F>
         {esVenta&&<F label="Canal"><Sel value={f.canal} onChange={e=>set('canal',e.target.value)}><option value="">Seleccionar…</option>{CANALES.map(c=><option key={c} value={c}>{c}</option>)}</Sel></F>}
         <div style={{display:'flex',gap:10}}><Btn variant="ghost" onClick={onBack} style={{flex:1}}>Cancelar</Btn><Btn onClick={submit} style={{flex:2,opacity:sending?0.6:1}} disabled={sending}>{sending?'Registrando…':'Registrar'}</Btn></div>
       </div>
