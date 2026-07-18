@@ -250,6 +250,20 @@ function prefijoCliente(nombre) {
   return (limpio + 'XXX').substring(0, 3);
 }
 
+// Busca el producto de la fila de BALANCE que tenga esta REFERENCIA — se usa para
+// que un cobro/gasto vinculado herede el producto de la operación original.
+function buscarProductoPorReferencia(referencia) {
+  if (!referencia) return '';
+  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  var lastRow = balance.getLastRow();
+  if (lastRow < 3) return '';
+  var data = balance.getRange(3, 5, lastRow - 2, 8).getValues(); // E..L: PRODUCTO ... REFERENCIA
+  for (var i = 0; i < data.length; i++) {
+    if (data[i][7] === referencia) return data[i][0] || '';
+  }
+  return '';
+}
+
 function nextReferencia(prefix) {
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   var lastRow = balance.getLastRow();
@@ -493,6 +507,7 @@ function addMovement(p) {
   var signo   = p.tipo === 'gasto' ? -1 : 1;
   var monto   = (parseFloat(p.monto) || 0) * signo;
   var cajaLbl = CAJA_LABELS[p.caja] || p.caja;
+  var producto = p.referencia ? buscarProductoPorReferencia(p.referencia) : '';
 
   var ultimaReal = obtenerUltimaFilaConFecha(caja, 2); // B = FECHA
   caja.insertRowAfter(ultimaReal);
@@ -502,7 +517,7 @@ function addMovement(p) {
     parseFechaApp(p.fecha),                                // B FECHA
     p.detalle || (p.tipo === 'cobro' ? 'Cobro' : 'Gasto'),  // C DETALLE
     p.contacto || '',                                       // D SUBDETALLE
-    '',                                                     // E PRODUCTO
+    producto,                                               // E PRODUCTO (heredado de la operación vinculada, si hay)
     monto,                                                  // F MONTO $
     '=F' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1)', // G MONTO US$ (misma fórmula que el resto de la columna)
     cajaLbl,                                                // H CAJA
