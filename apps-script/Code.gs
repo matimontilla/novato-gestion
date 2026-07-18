@@ -278,8 +278,8 @@ function escribirFormulasBalance(row) {
   balance.getRange(row, 8, 1, 4).setValues([[
     '=G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1)', // H MONTO US$ FF
     '=H' + row + '+P' + row,                                                               // I MONTO US$ FP
-    '=G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)',                         // J CU $
-    '=H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)'                          // K CU US$
+    '=IF(G' + row + '>0;G' + row + '/M' + row + ';G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE))', // J CU $ (venta: valor unitario · gasto: costo por producción total)
+    '=IF(G' + row + '>0;H' + row + '/M' + row + ';H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE))'  // K CU US$ (misma lógica en dólares)
   ]]);
   balance.getRange(row, 14).setValue('=IF(G' + row + '>0;"Ingreso";(IF(G' + row + '=0;"Movimiento";"Egreso")))'); // N CONCEPTO
   balance.getRange(row, 15, 1, 4).setValues([[
@@ -786,8 +786,8 @@ function repararTodasLasFormulas() {
       colHK.push([
         '=G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1)',
         '=H' + row + '+P' + row,
-        '=G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)',
-        '=H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)'
+        '=IF(G' + row + '>0;G' + row + '/M' + row + ';G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE))',
+        '=IF(G' + row + '>0;H' + row + '/M' + row + ';H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE))'
       ]);
       colN.push(['=IF(G' + row + '>0;"Ingreso";(IF(G' + row + '=0;"Movimiento";"Egreso")))']);
       colOR.push([
