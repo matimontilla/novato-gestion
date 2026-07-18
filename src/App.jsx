@@ -533,6 +533,11 @@ function DashboardScreen({onNavigate,price,source,productos,last,operacionesPend
           const dias=op.fecha?Math.floor((Date.now()-new Date(op.fecha).getTime())/86400000):null;
           const esVenta=op.tipo==='venta';
           const vencida=esVenta&&dias!==null&&dias>60;
+          // Para venta, saldoArs>0 = nos deben. Para compra, montoArs y pagado son negativos,
+          // así que invertimos el signo para que un valor positivo signifique "debemos esto"
+          // (más intuitivo) y detectamos cuándo en realidad hay un sobrepago/crédito a favor.
+          const pendiente=esVenta?op.saldoArs:-op.saldoArs;
+          const esCredito=pendiente<0;
           return (
             <div key={op.referencia+'-'+i} style={{background:C.barrel,border:`1px solid ${vencida?'#f0808088':C.border}`,borderRadius:12,padding:'12px 14px',display:'flex',alignItems:'center',gap:12}}>
               <span style={{fontSize:22,flexShrink:0}}>{esVenta?'🍾':'📋'}</span>
@@ -540,8 +545,11 @@ function DashboardScreen({onNavigate,price,source,productos,last,operacionesPend
                 <div style={{color:C.text,fontSize:13,fontFamily:'system-ui',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{op.contraparte||'(sin nombre)'}{op.producto?` · ${op.producto}`:''}</div>
                 <div style={{color:vencida?'#f08080':C.dim,fontSize:11,fontFamily:'system-ui',marginTop:2,fontWeight:vencida?700:400}}>{vencida?'⚠ ':''}{op.detalle}{dias!==null?` · hace ${dias} día${dias===1?'':'s'}`:''}</div>
               </div>
-              <div style={{fontSize:13,fontFamily:'system-ui',flexShrink:0,textAlign:'right',fontWeight:700,color:esVenta?'#7dce9b':'#f08080'}}>
-                {esVenta?'+':'-'}${Math.abs(op.saldoArs).toLocaleString('es-AR')}
+              <div style={{fontSize:13,fontFamily:'system-ui',flexShrink:0,textAlign:'right'}}>
+                <div style={{fontWeight:700,color:esCredito?'#6ba3d6':(esVenta?'#7dce9b':'#f08080')}}>
+                  {esCredito?'':(esVenta?'+':'-')}${Math.abs(pendiente).toLocaleString('es-AR')}
+                </div>
+                {esCredito&&<div style={{fontSize:9,color:'#6ba3d6',fontFamily:'system-ui'}}>a favor</div>}
               </div>
             </div>
           );
