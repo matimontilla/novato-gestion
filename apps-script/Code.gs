@@ -321,8 +321,8 @@ function escribirFormulasBalance(row, incluirSaldo) {
   balance.getRange(row, 8, 1, 4).setValues([[
     '=IF(G' + row + '=0;"";G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1))', // H MONTO US$ FF
     incluirSaldo ? '=IF(G' + row + '=0;"";H' + row + '+P' + row + ')' : '',                                       // I MONTO US$ FP
-    '=IF(G' + row + '=0;"";IF(G' + row + '>0;G' + row + '/M' + row + ';G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))', // J CU $
-    '=IF(G' + row + '=0;"";IF(G' + row + '>0;H' + row + '/M' + row + ';H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'  // K CU US$
+    '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;G' + row + '/M' + row + ';G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))', // J CU $
+    '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;H' + row + '/M' + row + ';H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'  // K CU US$
   ]]);
   balance.getRange(row, 14).setValue('=IF(G' + row + '>0;"Ingreso";(IF(G' + row + '=0;"Movimiento";"Egreso")))'); // N CONCEPTO
   if (incluirSaldo) {
@@ -913,8 +913,8 @@ function repararTodasLasFormulas() {
       colHK.push([
         '=IF(G' + row + '=0;"";G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1))',
         '=IF(G' + row + '=0;"";H' + row + '+P' + row + ')',
-        '=IF(G' + row + '=0;"";IF(G' + row + '>0;G' + row + '/M' + row + ';G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))',
-        '=IF(G' + row + '=0;"";IF(G' + row + '>0;H' + row + '/M' + row + ';H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'
+        '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;G' + row + '/M' + row + ';G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))',
+        '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;H' + row + '/M' + row + ';H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'
       ]);
       colN.push(['=IF(G' + row + '>0;"Ingreso";(IF(G' + row + '=0;"Movimiento";"Egreso")))']);
       colOR.push([
@@ -1010,37 +1010,90 @@ function repararMontoUSCaja() {
 }
 
 // ── UTILIDAD OPCIONAL — correr UNA SOLA VEZ a mano ────────────────────
-// Separa los pagos de CAJA cargados bajo la referencia CCI22-001 según el año en
-// que se ejecutaron: los de 2022 (11 filas) quedan con esa misma referencia — el
-// costo indirecto real de la cosecha 2022 — y los de 2023 en adelante (59 filas:
-// gastos de constitución de la SAS, Contadores/AFIP, y la devolución del préstamo
-// Semilla) pasan a una referencia nueva, CCI23-001, para no seguir mezclando
-// conceptos de años distintos bajo el mismo código. Lee y escribe la columna
-// entera de una sola vez (no fila por fila), para no repetir el problema de
-// rendimiento de versiones anteriores.
-function separarCCI22001PorAnio() {
+// Reclasifica los 70 pagos de CAJA bajo CCI22-001 según el criterio real acordado
+// (no solo por año, sino por a qué correspondía cada uno):
+//  · AFIP/Contadores (cualquier año) → costo operativo de la empresa, no de producción.
+//    Pasan a CO (referencia CCI23-001, DETALLE='CO').
+//  · Ya etiquetados con Malbec 2023 (el préstamo Semilla + 1 de Impuestos y Débitos) →
+//    costo real de esa producción. Pasan a su propia referencia SEM23-001.
+//  · Envío → correspondían a envíos de productos de la partida 2022, quedan en CCI22-001.
+//  · El resto (costo indirecto real de 2022 + 2 filas ambiguas de ajuste/movimiento
+//    de caja) queda sin tocar en CCI22-001.
+// Después crea las 2 filas correspondientes en BALANCE (CO sin producto, y Semilla con
+// Malbec 2023) para que el saldo de cada referencia reconcilie correctamente.
+function reclasificarCostosIndirectos() {
   var caja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CAJA');
-  var lastRow = caja.getLastRow();
-  if (lastRow < 3) { Logger.log('CAJA está vacía, nada para separar.'); return; }
+  var cajaLastRow = caja.getLastRow();
+  if (cajaLastRow < 3) { Logger.log('CAJA está vacía.'); return; }
 
-  var n = lastRow - 2;
-  var fechas      = caja.getRange(3, 2, n, 1).getValues(); // B FECHA
+  var n = cajaLastRow - 2;
+  var subdetalles = caja.getRange(3, 4, n, 1).getValues(); // D SUBDETALLE
+  var productos   = caja.getRange(3, 5, n, 1).getValues(); // E PRODUCTO
   var refRange    = caja.getRange(3, 9, n, 1);
-  var referencias = refRange.getValues();                   // I REFERENCIA
+  var referencias = refRange.getValues();                  // I REFERENCIA
+  var detRange    = caja.getRange(3, 3, n, 1);
+  var detalles    = detRange.getValues();                  // C DETALLE
 
-  var nuevaReferencia = 'CCI23-001';
-  var cambios = 0;
+  var cambiosCO = 0, cambiosSem = 0, envioConfirmados = 0;
   for (var i = 0; i < n; i++) {
-    if (referencias[i][0] === 'CCI22-001' && fechas[i][0] instanceof Date && fechas[i][0].getFullYear() >= 2023) {
-      referencias[i][0] = nuevaReferencia;
-      cambios++;
+    if (referencias[i][0] !== 'CCI22-001') continue;
+    var sub  = subdetalles[i][0];
+    var prod = productos[i][0];
+    if (sub === 'AFIP' || sub === 'Contadores') {
+      referencias[i][0] = 'CCI23-001';
+      detalles[i][0] = 'CO';
+      cambiosCO++;
+    } else if (prod === 'Malbec 2023') {
+      referencias[i][0] = 'SEM23-001';
+      cambiosSem++;
+    } else if (sub === 'Envio') {
+      envioConfirmados++; // ya está en CCI22-001, sólo lo confirmamos en el conteo
     }
   }
 
-  if (!cambios) { Logger.log('No encontré filas de CCI22-001 de 2023 en adelante — ¿ya se corrió esto antes?'); return; }
+  if (!cambiosCO && !cambiosSem) { Logger.log('No encontré filas para reclasificar — ¿ya se corrió esto antes?'); return; }
 
   refRange.setValues(referencias);
-  Logger.log('Listo — ' + cambios + ' fila(s) movidas de CCI22-001 a ' + nuevaReferencia + ' (2023 en adelante). Las de 2022 quedaron sin tocar.');
+  detRange.setValues(detalles);
+
+  // Sumar los montos reales de cada grupo ya reclasificado, para las filas de BALANCE
+  var montos = caja.getRange(3, 6, n, 1).getValues(); // F MONTO $
+  var totalCO = 0, totalSem = 0;
+  for (var j = 0; j < n; j++) {
+    if (referencias[j][0] === 'CCI23-001' && detalles[j][0] === 'CO') totalCO += (Number(montos[j][0]) || 0);
+    if (referencias[j][0] === 'SEM23-001') totalSem += (Number(montos[j][0]) || 0);
+  }
+
+  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  var hoy = new Date();
+
+  // Fila CO: sin producto, no se prorratea a ningún vino
+  var filaCO = obtenerUltimaFilaConFecha(balance, 2);
+  balance.insertRowAfter(filaCO);
+  filaCO = filaCO + 1;
+  balance.getRange(filaCO, 2).setValue(hoy);
+  balance.getRange(filaCO, 3).setValue('CO');
+  balance.getRange(filaCO, 4).setValue('Contadores/AFIP 2022-2025 (constitución SAS)');
+  balance.getRange(filaCO, 7).setValue(totalCO);
+  balance.getRange(filaCO, 12).setValue('CCI23-001');
+  balance.getRange(filaCO, 13).setValue(0);
+  escribirFormulasBalance(filaCO);
+
+  // Fila Semilla: préstamo usado para financiar producción de Malbec 2023
+  var filaSem = obtenerUltimaFilaConFecha(balance, 2);
+  balance.insertRowAfter(filaSem);
+  filaSem = filaSem + 1;
+  balance.getRange(filaSem, 2).setValue(hoy);
+  balance.getRange(filaSem, 3).setValue('CI');
+  balance.getRange(filaSem, 4).setValue('Semilla');
+  balance.getRange(filaSem, 5).setValue('Malbec 2023');
+  balance.getRange(filaSem, 7).setValue(totalSem);
+  balance.getRange(filaSem, 12).setValue('SEM23-001');
+  balance.getRange(filaSem, 13).setValue(0);
+  escribirFormulasBalance(filaSem);
+
+  Logger.log('CAJA: ' + cambiosCO + ' fila(s) a CO (CCI23-001), ' + cambiosSem + ' a SEM23-001, ' + envioConfirmados + ' de Envío confirmadas en CCI22-001.');
+  Logger.log('BALANCE: fila ' + filaCO + ' (CO, $' + totalCO + ') y fila ' + filaSem + ' (Semilla/Malbec 2023, $' + totalSem + ') creadas.');
 }
 
 // como si la venta nunca se hubiera cargado. Verifica que la fila 379 sea realmente
