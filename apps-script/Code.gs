@@ -1018,6 +1018,40 @@ function repararMontoUSCaja() {
 //    costo real de esa producción. Pasan a su propia referencia SEM23-001.
 //  · Envío → correspondían a envíos de productos de la partida 2022, quedan en CCI22-001.
 //  · El resto (costo indirecto real de 2022 + 2 filas ambiguas de ajuste/movimiento
+// ── UTILIDAD OPCIONAL — correr UNA VEZ a mano ────────────────────────
+// Las filas de BALANCE que reparten un costo indirecto entre varios productos (ej.
+// las de CCI22-001: Cabernet Franc/Malbec/Chardonnay 2022) calculan su MONTO $ con
+// una fórmula propia: =SUMIF(CAJA!...)*VLOOKUP(...;STOCK...). Esa fórmula quedó con
+// rangos de CAJA DISTINTOS entre sí (una desactualizada, las otras más amplias),
+// dando resultados inconsistentes entre filas que deberían coincidir. Esto normaliza
+// el rango de CAJA en TODAS las fórmulas de este tipo a uno abierto, para que no
+// vuelva a pasar. Sólo toca la columna G (MONTO $) y sólo en filas que ya tienen
+// este patrón — no afecta ninguna otra fórmula.
+function normalizarFormulasProrrateadasCI() {
+  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  var lastRow = balance.getLastRow();
+  if (lastRow < 3) { Logger.log('BALANCE está vacía.'); return; }
+
+  var rangeG   = balance.getRange(3, 7, lastRow - 2, 1); // G MONTO $
+  var formulas = rangeG.getFormulas();
+  var cambios  = 0;
+
+  for (var i = 0; i < formulas.length; i++) {
+    var f = formulas[i][0];
+    if (!f || f.indexOf('SUMIF(CAJA') === -1) continue; // sólo filas con este patrón de prorrateo
+    var nueva = f
+      .replace(/CAJA!\$?I\$?\d+:\$?I\$?\d+/, 'CAJA!$I$3:$I')
+      .replace(/CAJA!\$?F\$?\d+:\$?F\$?\d+/, 'CAJA!$F$3:$F');
+    if (nueva !== f) {
+      formulas[i][0] = nueva;
+      cambios++;
+    }
+  }
+
+  rangeG.setFormulas(formulas);
+  Logger.log('Listo — ' + cambios + ' fórmula(s) de MONTO $ (costos prorrateados) normalizadas a rango abierto.');
+}
+
 //    de caja) queda sin tocar en CCI22-001.
 // Después crea las 2 filas correspondientes en BALANCE (CO sin producto, y Semilla con
 // Malbec 2023) para que el saldo de cada referencia reconcilie correctamente.
