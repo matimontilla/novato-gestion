@@ -1024,49 +1024,49 @@ function repararMontoUSCaja() {
 // una fórmula propia: =SUMIF(CAJA!...)*VLOOKUP(...;STOCK...). Esa fórmula quedó con
 // rangos de CAJA DISTINTOS entre sí (una desactualizada, las otras más amplias),
 // dando resultados inconsistentes entre filas que deberían coincidir. Esto normaliza
-// ── UTILIDAD OPCIONAL — correr UNA VEZ a mano ────────────────────────
-// Hay filas completamente vacías en CAJA (sin FECHA ni MONTO) que igual tienen una
-// fórmula suelta en MONTO US$ (columna G), quedando en el hueco entre la última
 // ── ACTUALIZACIÓN DIARIA DE BLUE_API ─────────────────────────────────
-// Reemplaza el mecanismo que se usaba antes (armado desde Excel/Claude en Excel,
-// de fuente desconocida y que dejó de correr). Trae la cotización del día desde la
-// misma API que ya usa el dashboard de la app (bluelytics.com.ar) y agrega una fila
-// nueva a BLUE_API si el día de hoy todavía no está cargado — no duplica si se
-// corre más de una vez el mismo día. B=compra (value_buy), C=venta (value_sell),
-// mismo orden que ya tienen las filas existentes y que ya usan el resto de las
-// fórmulas de la planilla (BLUE_API!$C$2:$C$4590 como cotización).
+// Reemplaza el mecanismo que se usaba antes (armado desde Excel/Claude en Excel, de
+// fuente desconocida y que dejó de correr). Usa el endpoint de evolución histórica
+// (no sólo "latest") para que, además de agregar la cotización de hoy, rellene
+// automáticamente cualquier hueco de fechas que haya quedado sin cargar (por
+// ejemplo si el trigger diario falla un día). B=compra (value_buy), C=venta
+// (value_sell), mismo orden que ya usan el resto de las fórmulas de la planilla.
 function actualizarBlueApi() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BLUE_API');
   if (!sheet) { Logger.log('No encontré la pestaña BLUE_API.'); return; }
 
-  var hoy = new Date();
-  hoy.setHours(0, 0, 0, 0);
-
-  var primeraFecha = sheet.getRange(2, 1).getValue();
-  if (primeraFecha instanceof Date) {
-    var pf = new Date(primeraFecha);
-    pf.setHours(0, 0, 0, 0);
-    if (pf.getTime() === hoy.getTime()) {
-      Logger.log('BLUE_API ya tiene la cotización de hoy (' + hoy.toDateString() + ') — no se agrega nada.');
-      return;
-    }
-  }
-
-  var resp = UrlFetchApp.fetch('https://api.bluelytics.com.ar/v2/latest', { muteHttpExceptions: true });
+  var resp = UrlFetchApp.fetch('https://api.bluelytics.com.ar/v2/evolution.json', { muteHttpExceptions: true });
   if (resp.getResponseCode() !== 200) {
     Logger.log('Error consultando bluelytics.com.ar: código ' + resp.getResponseCode());
     return;
   }
   var data = JSON.parse(resp.getContentText());
-  if (!data || !data.blue) { Logger.log('Respuesta inesperada de bluelytics.com.ar: ' + resp.getContentText()); return; }
+  var blue = Array.isArray(data) ? data.filter(function(d) { return d.source === 'blue'; }) : [];
+  if (!blue.length) {
+    Logger.log('La respuesta no trajo cotizaciones "blue" — revisar formato. Primeros 500 caracteres: ' + resp.getContentText().substring(0, 500));
+    return;
+  }
+  blue.sort(function(a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); }); // ascendente
 
-  var compra = data.blue.value_buy;
-  var venta  = data.blue.value_sell;
+  var lastRow = sheet.getLastRow();
+  var existentes = {};
+  if (lastRow >= 2) {
+    sheet.getRange(2, 1, lastRow - 1, 1).getValues().forEach(function(r) {
+      if (r[0] instanceof Date) existentes[Utilities.formatDate(r[0], 'America/Argentina/Mendoza', 'yyyy-MM-dd')] = true;
+    });
+  }
 
-  sheet.insertRowAfter(1); // fila nueva justo después del encabezado, mantiene lo más reciente arriba
-  sheet.getRange(2, 1, 1, 3).setValues([[hoy, compra, venta]]);
+  var agregadas = 0;
+  blue.forEach(function(d) {
+    if (existentes[d.date]) return; // ya está cargada, no duplicar
+    var fecha = new Date(d.date + 'T00:00:00');
+    sheet.insertRowAfter(1); // siempre después del encabezado — procesando en orden ascendente, el resultado final queda con lo más reciente arriba
+    sheet.getRange(2, 1, 1, 3).setValues([[fecha, d.value_buy, d.value_sell]]);
+    existentes[d.date] = true;
+    agregadas++;
+  });
 
-  Logger.log('BLUE_API actualizado: ' + hoy.toDateString() + ' — compra ' + compra + ', venta ' + venta + '.');
+  Logger.log('Listo — ' + agregadas + ' fecha(s) agregada(s) a BLUE_API (incluye cualquier hueco encontrado).');
 }
 
 // UTILIDAD — correr UNA VEZ a mano para activar la actualización diaria automática.
