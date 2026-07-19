@@ -1032,23 +1032,26 @@ function normalizarFormulasProrrateadasCI() {
   var lastRow = balance.getLastRow();
   if (lastRow < 3) { Logger.log('BALANCE está vacía.'); return; }
 
-  var rangeG   = balance.getRange(3, 7, lastRow - 2, 1); // G MONTO $
-  var formulas = rangeG.getFormulas();
-  var cambios  = 0;
+  var n = lastRow - 2;
+  // getFormulas() se usa sólo para IDENTIFICAR filas candidatas — nunca se vuelve a
+  // escribir el array completo de una, así una celda con un valor plano (no fórmula,
+  // que getFormulas() siempre devuelve como '' aunque tenga un número cargado) nunca
+  // puede terminar pisada por accidente.
+  var formulas = balance.getRange(3, 7, n, 1).getFormulas(); // G MONTO $
+  var cambios = 0;
 
-  for (var i = 0; i < formulas.length; i++) {
+  for (var i = 0; i < n; i++) {
     var f = formulas[i][0];
     if (!f || f.indexOf('SUMIF(CAJA') === -1) continue; // sólo filas con este patrón de prorrateo
     var nueva = f
       .replace(/CAJA!\$?I\$?\d+:\$?I\$?\d+/, 'CAJA!$I$3:$I')
       .replace(/CAJA!\$?F\$?\d+:\$?F\$?\d+/, 'CAJA!$F$3:$F');
     if (nueva !== f) {
-      formulas[i][0] = nueva;
+      balance.getRange(i + 3, 7).setValue(nueva); // escribe SÓLO esta celda puntual
       cambios++;
     }
   }
 
-  rangeG.setFormulas(formulas);
   Logger.log('Listo — ' + cambios + ' fórmula(s) de MONTO $ (costos prorrateados) normalizadas a rango abierto.');
 }
 
