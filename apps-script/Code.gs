@@ -321,8 +321,8 @@ function escribirFormulasBalance(row, incluirSaldo) {
   balance.getRange(row, 8, 1, 4).setValues([[
     '=IF(G' + row + '=0;"";G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1))', // H MONTO US$ FF
     incluirSaldo ? '=IF(G' + row + '=0;"";H' + row + '+P' + row + ')' : '',                                       // I MONTO US$ FP
-    '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;G' + row + '/M' + row + ';G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))', // J CU $
-    '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;H' + row + '/M' + row + ';H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'  // K CU US$
+    '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;IF(M' + row + '=0;"";G' + row + '/M' + row + ');G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))', // J CU $ (venta sin botellas cargadas, ej. operación contable sin entrega física: vacío)
+    '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;IF(M' + row + '=0;"";H' + row + '/M' + row + ');H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'  // K CU US$
   ]]);
   balance.getRange(row, 14).setValue('=IF(G' + row + '>0;"Ingreso";(IF(G' + row + '=0;"Movimiento";"Egreso")))'); // N CONCEPTO
   if (incluirSaldo) {
@@ -913,8 +913,8 @@ function repararTodasLasFormulas() {
       colHK.push([
         '=IF(G' + row + '=0;"";G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1))',
         '=IF(G' + row + '=0;"";H' + row + '+P' + row + ')',
-        '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;G' + row + '/M' + row + ';G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))',
-        '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;H' + row + '/M' + row + ';H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'
+        '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;IF(M' + row + '=0;"";G' + row + '/M' + row + ');G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))',
+        '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;IF(M' + row + '=0;"";H' + row + '/M' + row + ');H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'
       ]);
       colN.push(['=IF(G' + row + '>0;"Ingreso";(IF(G' + row + '=0;"Movimiento";"Egreso")))']);
       colOR.push([
@@ -1024,6 +1024,29 @@ function repararMontoUSCaja() {
 // una fórmula propia: =SUMIF(CAJA!...)*VLOOKUP(...;STOCK...). Esa fórmula quedó con
 // rangos de CAJA DISTINTOS entre sí (una desactualizada, las otras más amplias),
 // dando resultados inconsistentes entre filas que deberían coincidir. Esto normaliza
+// ── UTILIDAD OPCIONAL — correr UNA VEZ a mano ────────────────────────
+// Hay filas completamente vacías en CAJA (sin FECHA ni MONTO) que igual tienen una
+// fórmula suelta en MONTO US$ (columna G), quedando en el hueco entre la última
+// transacción real y el resumen de CAJAS del pie de la hoja. Como no tienen fecha,
+// esa fórmula da #DIV/0! y ensucia cualquier búsqueda de errores. Esto las limpia,
+// tocando solamente filas donde FECHA está vacía (nunca una fila con datos reales).
+function limpiarFilasVaciasCaja() {
+  var caja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CAJA');
+  var lastRow = caja.getLastRow();
+  if (lastRow < 3) { Logger.log('CAJA está vacía.'); return; }
+
+  var n = lastRow - 2;
+  var fechas = caja.getRange(3, 2, n, 1).getValues(); // B FECHA — sólo para identificar filas vacías
+  var cambios = 0;
+  for (var i = 0; i < n; i++) {
+    if (fechas[i][0] === '' || fechas[i][0] === null) {
+      var celda = caja.getRange(i + 3, 7); // G MONTO US$
+      if (celda.getFormula()) { celda.clearContent(); cambios++; }
+    }
+  }
+  Logger.log('Listo — ' + cambios + ' fila(s) vacía(s) de CAJA con fórmula suelta, limpiadas.');
+}
+
 // el rango de CAJA en TODAS las fórmulas de este tipo a uno abierto, para que no
 // vuelva a pasar. Sólo toca la columna G (MONTO $) y sólo en filas que ya tienen
 // este patrón — no afecta ninguna otra fórmula.
