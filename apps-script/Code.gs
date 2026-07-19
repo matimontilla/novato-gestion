@@ -1009,6 +1009,40 @@ function repararMontoUSCaja() {
   Logger.log('Listo — ' + filas.length + ' fila(s) de CAJA con MONTO US$ reparado.');
 }
 
+// ── UTILIDAD OPCIONAL — correr UNA SOLA VEZ a mano ────────────────────
+// Separa los pagos de CAJA cargados bajo la referencia CCI22-001 según el año en
+// que se ejecutaron: los de 2022 (11 filas) quedan con esa misma referencia — el
+// costo indirecto real de la cosecha 2022 — y los de 2023 en adelante (59 filas:
+// gastos de constitución de la SAS, Contadores/AFIP, y la devolución del préstamo
+// Semilla) pasan a una referencia nueva, CCI23-001, para no seguir mezclando
+// conceptos de años distintos bajo el mismo código. Lee y escribe la columna
+// entera de una sola vez (no fila por fila), para no repetir el problema de
+// rendimiento de versiones anteriores.
+function separarCCI22001PorAnio() {
+  var caja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CAJA');
+  var lastRow = caja.getLastRow();
+  if (lastRow < 3) { Logger.log('CAJA está vacía, nada para separar.'); return; }
+
+  var n = lastRow - 2;
+  var fechas      = caja.getRange(3, 2, n, 1).getValues(); // B FECHA
+  var refRange    = caja.getRange(3, 9, n, 1);
+  var referencias = refRange.getValues();                   // I REFERENCIA
+
+  var nuevaReferencia = 'CCI23-001';
+  var cambios = 0;
+  for (var i = 0; i < n; i++) {
+    if (referencias[i][0] === 'CCI22-001' && fechas[i][0] instanceof Date && fechas[i][0].getFullYear() >= 2023) {
+      referencias[i][0] = nuevaReferencia;
+      cambios++;
+    }
+  }
+
+  if (!cambios) { Logger.log('No encontré filas de CCI22-001 de 2023 en adelante — ¿ya se corrió esto antes?'); return; }
+
+  refRange.setValues(referencias);
+  Logger.log('Listo — ' + cambios + ' fila(s) movidas de CCI22-001 a ' + nuevaReferencia + ' (2023 en adelante). Las de 2022 quedaron sin tocar.');
+}
+
 // como si la venta nunca se hubiera cargado. Verifica que la fila 379 sea realmente
 // esa venta antes de tocar nada — si no coincide, no borra nada y avisa por Logger.
 function deshacerVentaTest() {
