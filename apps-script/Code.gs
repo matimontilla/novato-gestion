@@ -1027,6 +1027,63 @@ function repararMontoUSCaja() {
 // ── UTILIDAD OPCIONAL — correr UNA VEZ a mano ────────────────────────
 // Hay filas completamente vacías en CAJA (sin FECHA ni MONTO) que igual tienen una
 // fórmula suelta en MONTO US$ (columna G), quedando en el hueco entre la última
+// ── ACTUALIZACIÓN DIARIA DE BLUE_API ─────────────────────────────────
+// Reemplaza el mecanismo que se usaba antes (armado desde Excel/Claude en Excel,
+// de fuente desconocida y que dejó de correr). Trae la cotización del día desde la
+// misma API que ya usa el dashboard de la app (bluelytics.com.ar) y agrega una fila
+// nueva a BLUE_API si el día de hoy todavía no está cargado — no duplica si se
+// corre más de una vez el mismo día. B=compra (value_buy), C=venta (value_sell),
+// mismo orden que ya tienen las filas existentes y que ya usan el resto de las
+// fórmulas de la planilla (BLUE_API!$C$2:$C$4590 como cotización).
+function actualizarBlueApi() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BLUE_API');
+  if (!sheet) { Logger.log('No encontré la pestaña BLUE_API.'); return; }
+
+  var hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+
+  var primeraFecha = sheet.getRange(2, 1).getValue();
+  if (primeraFecha instanceof Date) {
+    var pf = new Date(primeraFecha);
+    pf.setHours(0, 0, 0, 0);
+    if (pf.getTime() === hoy.getTime()) {
+      Logger.log('BLUE_API ya tiene la cotización de hoy (' + hoy.toDateString() + ') — no se agrega nada.');
+      return;
+    }
+  }
+
+  var resp = UrlFetchApp.fetch('https://api.bluelytics.com.ar/v2/latest', { muteHttpExceptions: true });
+  if (resp.getResponseCode() !== 200) {
+    Logger.log('Error consultando bluelytics.com.ar: código ' + resp.getResponseCode());
+    return;
+  }
+  var data = JSON.parse(resp.getContentText());
+  if (!data || !data.blue) { Logger.log('Respuesta inesperada de bluelytics.com.ar: ' + resp.getContentText()); return; }
+
+  var compra = data.blue.value_buy;
+  var venta  = data.blue.value_sell;
+
+  sheet.insertRowAfter(1); // fila nueva justo después del encabezado, mantiene lo más reciente arriba
+  sheet.getRange(2, 1, 1, 3).setValues([[hoy, compra, venta]]);
+
+  Logger.log('BLUE_API actualizado: ' + hoy.toDateString() + ' — compra ' + compra + ', venta ' + venta + '.');
+}
+
+// UTILIDAD — correr UNA VEZ a mano para activar la actualización diaria automática.
+// No hace falta tocar el menú de Triggers a mano: esto crea el trigger por código.
+// Si ya existe uno para esta función, no lo duplica.
+function instalarTriggerBlueApi() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'actualizarBlueApi') {
+      Logger.log('Ya existe un trigger para actualizarBlueApi — no se crea otro.');
+      return;
+    }
+  }
+  ScriptApp.newTrigger('actualizarBlueApi').timeBased().everyDays(1).atHour(9).create();
+  Logger.log('Listo — actualizarBlueApi() va a correr automáticamente todos los días alrededor de las 9am.');
+}
+
 // transacción real y el resumen de CAJAS del pie de la hoja. Como no tienen fecha,
 // esa fórmula da #DIV/0! y ensucia cualquier búsqueda de errores. Esto las limpia,
 // tocando solamente filas donde FECHA está vacía (nunca una fila con datos reales).
