@@ -319,7 +319,7 @@ function escribirFormulasBalance(row, incluirSaldo) {
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   balance.getRange(row, 6).setValue('=RIGHT(E' + row + ';4)'); // F AÑADA
   balance.getRange(row, 8, 1, 4).setValues([[
-    '=IF(G' + row + '=0;"";G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1))', // H MONTO US$ FF
+    '=IF(G' + row + '=0;"";G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A;BLUE_API!$C$2:$C;;-1))', // H MONTO US$ FF
     incluirSaldo ? '=IF(G' + row + '=0;"";H' + row + '+P' + row + ')' : '',                                       // I MONTO US$ FP
     '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;IF(M' + row + '=0;"";G' + row + '/M' + row + ');G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))', // J CU $ (venta sin botellas cargadas, ej. operación contable sin entrega física: vacío)
     '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;IF(M' + row + '=0;"";H' + row + '/M' + row + ');H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'  // K CU US$
@@ -629,7 +629,7 @@ function addMovement(p) {
       p.contacto || '',                                       // D SUBDETALLE
       productos[i] || '',                                     // E PRODUCTO (heredado de la operación vinculada, si hay)
       monto,                                                  // F MONTO $
-      '=F' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1)', // G MONTO US$
+      '=F' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A;BLUE_API!$C$2:$C;;-1)', // G MONTO US$
       cajaLbl,                                                // H CAJA
       p.referencia || ''                                      // I REFERENCIA (opcional → BALANCE)
     ]]);
@@ -911,7 +911,7 @@ function repararTodasLasFormulas() {
     grupo.forEach(function(row) {
       colF.push(['=RIGHT(E' + row + ';4)']);
       colHK.push([
-        '=IF(G' + row + '=0;"";G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1))',
+        '=IF(G' + row + '=0;"";G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A;BLUE_API!$C$2:$C;;-1))',
         '=IF(G' + row + '=0;"";H' + row + '+P' + row + ')',
         '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;IF(M' + row + '=0;"";G' + row + '/M' + row + ');G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))',
         '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;IF(M' + row + '=0;"";H' + row + '/M' + row + ');H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'
@@ -1001,7 +1001,7 @@ function repararMontoUSCaja() {
 
   grupos.forEach(function(grupo) {
     var col = grupo.map(function(row) {
-      return ['=F' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A$4590;BLUE_API!$C$2:$C$4590;;-1)'];
+      return ['=F' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A;BLUE_API!$C$2:$C;;-1)'];
     });
     caja.getRange(grupo[0], 7, grupo.length, 1).setValues(col);
   });
@@ -1132,21 +1132,59 @@ function normalizarFechasBlueApi() {
 // CAJA — la fecha donde se acumuló la mitad de la plata gastada — para que la
 // conversión a dólares refleje el tipo de cambio real de la época. Busca las filas
 // por su referencia (no por número fijo) y sólo toca esas dos.
+// UTILIDAD — correr UNA VEZ. Las fórmulas de BALANCE y CAJA que convierten a dólares
+// referencian BLUE_API con un rango de filas FIJO (ej. $A$56:$A$4644). Cuando
+// actualizarBlueApi reescribe la tabla, las filas se corren y ese rango queda
+// desajustado (se saltea las fechas más recientes → conversión mal). Esto reescribe
+// esas referencias a un RANGO ABIERTO ($A$2:$A, $C$2:$C) que nunca se desajusta,
+// sin importar cómo cambie BLUE_API. Escribe sólo en las celdas que realmente tienen
+// el patrón (nunca sobre un rango completo, para no repetir el borrado accidental).
+function normalizarRangosBlueApi() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var total = 0;
+  ['BALANCE', 'CAJA'].forEach(function(nombre) {
+    var sheet = ss.getSheetByName(nombre);
+    if (!sheet) return;
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return;
+    // La columna con la fórmula: H en BALANCE (col 8), G en CAJA (col 7)
+    var col = (nombre === 'BALANCE') ? 8 : 7;
+    var rango = sheet.getRange(2, col, lastRow - 1, 1);
+    var formulas = rango.getFormulas();
+    for (var i = 0; i < formulas.length; i++) {
+      var f = formulas[i][0];
+      if (!f || f.indexOf('BLUE_API') === -1) continue;
+      // Reemplazar cualquier rango BLUE_API!$X$n:$X$m (o $X$n:$X) por rango abierto
+      var nueva = f
+        .replace(/BLUE_API!\$A\$\d+:\$A(\$\d+)?/g, 'BLUE_API!$A$2:$A')
+        .replace(/BLUE_API!\$C\$\d+:\$C(\$\d+)?/g, 'BLUE_API!$C$2:$C');
+      if (nueva !== f) {
+        sheet.getRange(i + 2, col).setFormula(nueva); // sólo esta celda puntual
+        total++;
+      }
+    }
+  });
+  SpreadsheetApp.flush();
+  Logger.log('Listo — ' + total + ' fórmula(s) de BALANCE/CAJA pasadas a rango abierto de BLUE_API.');
+}
+
 function corregirFechasCOSemilla() {
-  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
-  var caja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CAJA');
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var balance = ss.getSheetByName('BALANCE');
+  var caja = ss.getSheetByName('CAJA');
   if (!balance || !caja) { Logger.log('Falta BALANCE o CAJA.'); return; }
 
-  // Calcula la fecha mediana ponderada por monto de todos los pagos de una referencia en CAJA
+  // Una sola lectura de CAJA (columnas F=monto e I=referencia) para calcular ambas medianas.
+  var lastRowCaja = caja.getLastRow();
+  var datosCaja = caja.getRange(3, 6, lastRowCaja - 2, 4).getValues(); // F..I: MONTO$, MONTOUS$, CAJA, REFERENCIA
+  var fechasCaja = caja.getRange(3, 2, lastRowCaja - 2, 1).getValues(); // B FECHA
+
   function fechaMediana(referencia) {
-    var lastRow = caja.getLastRow();
-    var data = caja.getRange(3, 2, lastRow - 2, 8).getValues(); // B..I: FECHA ... REFERENCIA
-    var pagos = [];
-    var total = 0;
-    for (var i = 0; i < data.length; i++) {
-      if (data[i][7] === referencia && data[i][0] instanceof Date) {
-        var monto = Math.abs(Number(data[i][4]) || 0); // F MONTO $
-        if (monto > 0) { pagos.push({ fecha: data[i][0], monto: monto }); total += monto; }
+    var pagos = [], total = 0;
+    for (var i = 0; i < datosCaja.length; i++) {
+      if (datosCaja[i][3] === referencia && fechasCaja[i][0] instanceof Date) {
+        var monto = Math.abs(Number(datosCaja[i][0]) || 0);
+        if (monto > 0) { pagos.push({ fecha: fechasCaja[i][0], monto: monto }); total += monto; }
       }
     }
     if (!pagos.length) return null;
@@ -1159,27 +1197,26 @@ function corregirFechasCOSemilla() {
     return pagos[pagos.length - 1].fecha;
   }
 
-  // Encuentra la fila de BALANCE con una referencia dada (columna L) y le fija la fecha (B)
-  function fijarFecha(referencia) {
-    var lastRow = balance.getLastRow();
-    var refs = balance.getRange(3, 12, lastRow - 2, 1).getValues(); // L REFERENCIA
-    for (var i = 0; i < refs.length; i++) {
-      if (refs[i][0] === referencia) {
-        var fila = i + 3;
-        var nueva = fechaMediana(referencia);
-        if (!nueva) { Logger.log('No hay pagos en CAJA para ' + referencia + ' — no se cambió.'); return; }
-        // Mediodía para evitar desfasaje de zona horaria (mismo criterio que BLUE_API)
-        var fechaLimpia = new Date(nueva.getFullYear(), nueva.getMonth(), nueva.getDate(), 12, 0, 0);
-        balance.getRange(fila, 2).setValue(fechaLimpia);
-        Logger.log(referencia + ': fila ' + fila + ' → fecha ' + Utilities.formatDate(fechaLimpia, 'America/Argentina/Mendoza', 'dd/MM/yyyy'));
-        return;
-      }
-    }
-    Logger.log('No encontré la fila de ' + referencia + ' en BALANCE.');
+  // Una sola lectura de la columna de referencias de BALANCE para ubicar las 2 filas.
+  var lastRowBal = balance.getLastRow();
+  var refs = balance.getRange(3, 12, lastRowBal - 2, 1).getValues(); // L REFERENCIA
+  var objetivo = { 'CCI23-001': null, 'SEM23-001': null };
+  for (var k = 0; k < refs.length; k++) {
+    if (refs[k][0] in objetivo && objetivo[refs[k][0]] === null) objetivo[refs[k][0]] = k + 3;
   }
 
-  fijarFecha('CCI23-001'); // CO
-  fijarFecha('SEM23-001'); // Semilla
+  ['CCI23-001', 'SEM23-001'].forEach(function(ref) {
+    var fila = objetivo[ref];
+    if (!fila) { Logger.log('No encontré ' + ref + ' en BALANCE.'); return; }
+    var mediana = fechaMediana(ref);
+    if (!mediana) { Logger.log('No hay pagos en CAJA para ' + ref + '.'); return; }
+    var fechaLimpia = new Date(mediana.getFullYear(), mediana.getMonth(), mediana.getDate(), 12, 0, 0);
+    balance.getRange(fila, 2).setValue(fechaLimpia);
+    Logger.log(ref + ': fila ' + fila + ' → ' + Utilities.formatDate(fechaLimpia, 'America/Argentina/Mendoza', 'dd/MM/yyyy'));
+  });
+
+  SpreadsheetApp.flush(); // fuerza a que se apliquen las escrituras antes de terminar
+  Logger.log('Listo — fechas de CO y Semilla corregidas a su mediana ponderada.');
 }
 
 // transacción real y el resumen de CAJAS del pie de la hoja. Como no tienen fecha,
