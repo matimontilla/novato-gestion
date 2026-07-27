@@ -1046,27 +1046,44 @@ function actualizarBlueApi() {
     Logger.log('La respuesta no trajo cotizaciones "blue" — revisar formato. Primeros 500 caracteres: ' + resp.getContentText().substring(0, 500));
     return;
   }
-  blue.sort(function(a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); }); // ascendente
 
+  // Mapa de fechas ya cargadas (yyyy-MM-dd) para no duplicar.
   var lastRow = sheet.getLastRow();
   var existentes = {};
+  var fechaMasReciente = null;
   if (lastRow >= 2) {
     sheet.getRange(2, 1, lastRow - 1, 1).getValues().forEach(function(r) {
-      if (r[0] instanceof Date) existentes[Utilities.formatDate(r[0], 'America/Argentina/Mendoza', 'yyyy-MM-dd')] = true;
+      if (r[0] instanceof Date) {
+        var key = Utilities.formatDate(r[0], 'America/Argentina/Mendoza', 'yyyy-MM-dd');
+        existentes[key] = true;
+        if (!fechaMasReciente || key > fechaMasReciente) fechaMasReciente = key;
+      }
     });
   }
 
-  var agregadas = 0;
-  blue.forEach(function(d) {
-    if (existentes[d.date]) return; // ya está cargada, no duplicar
-    var fecha = new Date(d.date + 'T00:00:00');
-    sheet.insertRowAfter(1); // siempre después del encabezado — procesando en orden ascendente, el resultado final queda con lo más reciente arriba
-    sheet.getRange(2, 1, 1, 3).setValues([[fecha, d.value_buy, d.value_sell]]);
-    existentes[d.date] = true;
-    agregadas++;
+  // Sólo fechas que FALTAN. Para no insertar miles de filas históricas la primera vez
+  // (el endpoint trae todo el histórico desde ~2011), si la tabla ya tiene datos sólo
+  // consideramos fechas MÁS NUEVAS que la más reciente ya cargada — que es lo único
+  // que realmente falta rellenar. Si la tabla estuviera vacía, entran todas.
+  var faltantes = blue.filter(function(d) {
+    if (existentes[d.date]) return false;
+    if (fechaMasReciente && d.date <= fechaMasReciente) return false;
+    return true;
   });
+  faltantes.sort(function(a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); }); // ascendente
 
-  Logger.log('Listo — ' + agregadas + ' fecha(s) agregada(s) a BLUE_API (incluye cualquier hueco encontrado).');
+  if (!faltantes.length) { Logger.log('BLUE_API ya está al día — no falta ninguna fecha.'); return; }
+
+  // Escribir TODO de una sola vez: insertar el bloque de filas y setear el rango completo.
+  // Van en orden descendente (más nuevas arriba) para respetar el orden de la tabla.
+  faltantes.reverse();
+  var filas = faltantes.map(function(d) {
+    return [new Date(d.date + 'T00:00:00'), d.value_buy, d.value_sell]; // B=compra, C=venta
+  });
+  sheet.insertRowsAfter(1, filas.length);
+  sheet.getRange(2, 1, filas.length, 3).setValues(filas);
+
+  Logger.log('Listo — ' + filas.length + ' fecha(s) agregada(s) a BLUE_API.');
 }
 
 // UTILIDAD — correr UNA VEZ a mano para activar la actualización diaria automática.
