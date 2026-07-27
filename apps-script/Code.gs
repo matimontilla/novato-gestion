@@ -1079,6 +1079,7 @@ function actualizarBlueApi() {
   destino.setFontColor('#000000'); // texto negro visible (el formato viejo lo tenía casi blanco)
   destino.setBackground(null);     // fondo uniforme
   sheet.getRange(2, 1, filas.length, 1).setNumberFormat('dd/mm/yyyy'); // columna FECHA como fecha pura, sin hora
+  sheet.getRange(1, 1, 1, 3).setValues([['day', 'value_buy', 'value_sell']]); // encabezado correcto: B=compra, C=venta
 
   Logger.log('Listo — BLUE_API reconstruida: ' + filas.length + ' fechas, de ' + fechas[fechas.length-1] + ' a ' + fechas[0] + '.');
 }
@@ -1121,6 +1122,64 @@ function normalizarFechasBlueApi() {
   }
   rango.setValues(valores);
   Logger.log('Listo — ' + cambios + ' fecha(s) de BLUE_API normalizadas a fecha pura (sin hora).');
+}
+
+// UTILIDAD — correr UNA VEZ. Las dos filas de BALANCE creadas para CO (Costos SAS,
+// ref CCI23-001) y Semilla (Malbec 2023, ref SEM23-001) quedaron con fecha 19/7/2026
+// (el día que se crearon), así que su MONTO US$ se valuaba al dólar de hoy. Pero esos
+// montos son la suma de decenas de pagos hechos entre 2022 y 2025, a un dólar mucho
+// más bajo. Esto les pone la FECHA MEDIANA PONDERADA POR MONTO de sus pagos reales en
+// CAJA — la fecha donde se acumuló la mitad de la plata gastada — para que la
+// conversión a dólares refleje el tipo de cambio real de la época. Busca las filas
+// por su referencia (no por número fijo) y sólo toca esas dos.
+function corregirFechasCOSemilla() {
+  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  var caja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CAJA');
+  if (!balance || !caja) { Logger.log('Falta BALANCE o CAJA.'); return; }
+
+  // Calcula la fecha mediana ponderada por monto de todos los pagos de una referencia en CAJA
+  function fechaMediana(referencia) {
+    var lastRow = caja.getLastRow();
+    var data = caja.getRange(3, 2, lastRow - 2, 8).getValues(); // B..I: FECHA ... REFERENCIA
+    var pagos = [];
+    var total = 0;
+    for (var i = 0; i < data.length; i++) {
+      if (data[i][7] === referencia && data[i][0] instanceof Date) {
+        var monto = Math.abs(Number(data[i][4]) || 0); // F MONTO $
+        if (monto > 0) { pagos.push({ fecha: data[i][0], monto: monto }); total += monto; }
+      }
+    }
+    if (!pagos.length) return null;
+    pagos.sort(function(a, b) { return a.fecha - b.fecha; });
+    var acum = 0;
+    for (var j = 0; j < pagos.length; j++) {
+      acum += pagos[j].monto;
+      if (acum >= total / 2) return pagos[j].fecha;
+    }
+    return pagos[pagos.length - 1].fecha;
+  }
+
+  // Encuentra la fila de BALANCE con una referencia dada (columna L) y le fija la fecha (B)
+  function fijarFecha(referencia) {
+    var lastRow = balance.getLastRow();
+    var refs = balance.getRange(3, 12, lastRow - 2, 1).getValues(); // L REFERENCIA
+    for (var i = 0; i < refs.length; i++) {
+      if (refs[i][0] === referencia) {
+        var fila = i + 3;
+        var nueva = fechaMediana(referencia);
+        if (!nueva) { Logger.log('No hay pagos en CAJA para ' + referencia + ' — no se cambió.'); return; }
+        // Mediodía para evitar desfasaje de zona horaria (mismo criterio que BLUE_API)
+        var fechaLimpia = new Date(nueva.getFullYear(), nueva.getMonth(), nueva.getDate(), 12, 0, 0);
+        balance.getRange(fila, 2).setValue(fechaLimpia);
+        Logger.log(referencia + ': fila ' + fila + ' → fecha ' + Utilities.formatDate(fechaLimpia, 'America/Argentina/Mendoza', 'dd/MM/yyyy'));
+        return;
+      }
+    }
+    Logger.log('No encontré la fila de ' + referencia + ' en BALANCE.');
+  }
+
+  fijarFecha('CCI23-001'); // CO
+  fijarFecha('SEM23-001'); // Semilla
 }
 
 // transacción real y el resumen de CAJAS del pie de la hoja. Como no tienen fecha,
