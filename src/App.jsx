@@ -688,6 +688,17 @@ function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,comprasPendien
   const hoy=new Date().toISOString().split('T')[0];
   const [f,setF]=useState({tipo:'cobro',monto:'',caja:'Empresa (Ludico)',detalle:'',contacto:'',contactoNuevo:'',fecha:hoy,referencia:''});
   const [sending,setSending]=useState(false);
+  // Cuadro de control: últimos movimientos de CAJA, cargados una vez y revelados de a 10.
+  const [movimientos,setMovimientos]=useState(null); // null=cargando, []=vacío, [...]=datos
+  const [visibles,setVisibles]=useState(10);
+  const cargarMovimientos=async()=>{
+    if(!GAS_URL){setMovimientos([]);return;}
+    try{
+      const d=await gasGet({action:'getMovimientosCaja'});
+      setMovimientos(Array.isArray(d?.movimientos)?d.movimientos:[]);
+    }catch(e){ setMovimientos([]); }
+  };
+  useEffect(()=>{cargarMovimientos();},[]);
   const set=(k,v)=>setF(p=>({...p,[k]:v,...((k==='detalle'||k==='contacto')?{referencia:''}:{})}));
   const listaDetalles = categorias?.length ? categorias.map(c=>c.detalle) : ['Cobro','Gasto'];
   const listaContactos = Array.from(new Set([...(clientes?.map(c=>c.nombre)||[]), ...(contactosBalance||[])])).sort((a,b)=>a.localeCompare(b,'es'));
@@ -772,6 +783,39 @@ function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,comprasPendien
         <F label="Fecha"><Inp type="date" value={f.fecha} onChange={e=>set('fecha',e.target.value)}/></F>
         <div style={{display:'flex',gap:10}}><Btn variant="ghost" onClick={onBack} style={{flex:1}}>Cancelar</Btn><Btn onClick={submit} style={{flex:2,opacity:sending?0.6:1}} disabled={sending}>{sending?'Registrando…':'Registrar movimiento'}</Btn></div>
       </div>
+
+      <Card style={{marginTop:24}}>
+        <SL>Últimos movimientos</SL>
+        {movimientos===null&&<div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',padding:'8px 2px'}}>Cargando…</div>}
+        {movimientos!==null&&movimientos.length===0&&<div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',padding:'8px 2px'}}>No hay movimientos para mostrar.</div>}
+        {movimientos!==null&&movimientos.length>0&&(
+          <>
+            {movimientos.slice(0,visibles).map((m,i)=>{
+              const esGasto=m.monto<0;
+              return (
+                <div key={i} style={{display:'grid',gridTemplateColumns:'1fr auto',gap:8,padding:'9px 2px',borderTop:`1px solid ${C.border}`,alignItems:'center'}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{color:C.text,fontSize:13,fontFamily:'system-ui',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                      {m.detalle||'—'}{m.contacto?` · ${m.contacto}`:''}
+                    </div>
+                    <div style={{color:C.dim,fontSize:11,fontFamily:'system-ui',marginTop:2}}>
+                      {m.fecha} · {m.caja}{m.user?` · cargó ${m.user}`:''}
+                    </div>
+                  </div>
+                  <div style={{textAlign:'right',fontSize:13,fontFamily:'system-ui',fontWeight:700,color:esGasto?'#f08080':'#7dce9b',whiteSpace:'nowrap'}}>
+                    {esGasto?'-':'+'}${Math.abs(m.monto).toLocaleString('es-AR')}
+                  </div>
+                </div>
+              );
+            })}
+            {visibles<movimientos.length&&(
+              <button onClick={()=>setVisibles(v=>v+10)} style={{width:'100%',marginTop:10,background:'none',border:`1px dashed ${C.border}`,borderRadius:10,padding:'10px',color:C.gold,fontSize:13,fontFamily:'system-ui',cursor:'pointer'}}>
+                Ver más ({movimientos.length-visibles} restantes)
+              </button>
+            )}
+          </>
+        )}
+      </Card>
     </div>
   );
 }

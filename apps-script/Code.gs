@@ -58,6 +58,7 @@ function doGet(e) {
     else if (action === 'addTransfer')   result = addTransfer(e.parameter);
     else if (action === 'addStockControl') result = addStockControl(e.parameter);
     else if (action === 'getOps')        result = { ops: getRecentOps(20) };
+    else if (action === 'getMovimientosCaja') result = { movimientos: getMovimientosCaja(100) };
     else                                 result = { error: 'Acción desconocida: ' + action };
   } catch(err) {
     result = { error: err.toString() };
@@ -854,6 +855,37 @@ function getRecentOps(n) {
 
   ops.sort(function(a, b) { return (b.ts || 0) - (a.ts || 0); });
   return ops.slice(0, n);
+}
+
+// Últimos N movimientos reales de CAJA (cobros/gastos que cargaron los socios), del
+// más reciente al más viejo, para el cuadro de control en la pestaña Caja de la app.
+// Lee sólo el bloque final de la hoja (no toda), y descarta filas sin fecha real
+// (vacías, o el bloque resumen "CAJAS" del pie). Devuelve todos los campos que se
+// muestran: fecha, detalle, subdetalle (cliente/proveedor), monto, caja y quién cargó.
+function getMovimientosCaja(n) {
+  var caja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CAJA');
+  if (!caja) return [];
+  var lastRow = caja.getLastRow();
+  if (lastRow < 3) return [];
+
+  var data = caja.getRange(3, 1, lastRow - 2, 9).getValues(); // A..I: USER,FECHA,DETALLE,SUBDET,PRODUCTO,MONTO$,MONTOUS$,CAJA,REFERENCIA
+  var out = [];
+  // Recorrer de abajo hacia arriba (lo más reciente primero) y cortar al juntar N.
+  for (var i = data.length - 1; i >= 0 && out.length < n; i--) {
+    var r = data[i];
+    if (!(r[1] instanceof Date)) continue; // sólo filas con fecha real (evita vacías y el bloque CAJAS)
+    var montoNum = Number(r[5]) || 0;      // F MONTO $
+    out.push({
+      fecha:     formatDate(r[1]),          // B
+      detalle:   r[2] || '',                // C
+      contacto:  r[3] || '',                // D SUBDETALLE (cliente/proveedor)
+      monto:     Math.round(montoNum),       // número crudo; el signo/formato lo pone el front
+      caja:      r[7] || '',                // H
+      user:      r[0] || '',                // A
+      ts:        r[1].getTime()
+    });
+  }
+  return out;
 }
 
 // ── UTILIDAD OPCIONAL — correr UNA VEZ a mano si querés ────────────────
