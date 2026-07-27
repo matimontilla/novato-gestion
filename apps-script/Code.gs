@@ -319,7 +319,7 @@ function escribirFormulasBalance(row, incluirSaldo) {
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   balance.getRange(row, 6).setValue('=RIGHT(E' + row + ';4)'); // F AÑADA
   balance.getRange(row, 8, 1, 4).setValues([[
-    '=IF(G' + row + '=0;"";G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A;BLUE_API!$C$2:$C;;-1))', // H MONTO US$ FF
+    '=IFERROR(IF(G' + row + '=0;"";G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A;BLUE_API!$C$2:$C;;-1));"")', // H MONTO US$ FF
     incluirSaldo ? '=IF(G' + row + '=0;"";H' + row + '+P' + row + ')' : '',                                       // I MONTO US$ FP
     '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;IF(M' + row + '=0;"";G' + row + '/M' + row + ');G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))', // J CU $ (venta sin botellas cargadas, ej. operación contable sin entrega física: vacío)
     '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;IF(M' + row + '=0;"";H' + row + '/M' + row + ');H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'  // K CU US$
@@ -629,7 +629,7 @@ function addMovement(p) {
       p.contacto || '',                                       // D SUBDETALLE
       productos[i] || '',                                     // E PRODUCTO (heredado de la operación vinculada, si hay)
       monto,                                                  // F MONTO $
-      '=F' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A;BLUE_API!$C$2:$C;;-1)', // G MONTO US$
+      '=IFERROR(F' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A;BLUE_API!$C$2:$C;;-1);"")', // G MONTO US$
       cajaLbl,                                                // H CAJA
       p.referencia || ''                                      // I REFERENCIA (opcional → BALANCE)
     ]]);
@@ -911,7 +911,7 @@ function repararTodasLasFormulas() {
     grupo.forEach(function(row) {
       colF.push(['=RIGHT(E' + row + ';4)']);
       colHK.push([
-        '=IF(G' + row + '=0;"";G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A;BLUE_API!$C$2:$C;;-1))',
+        '=IFERROR(IF(G' + row + '=0;"";G' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A;BLUE_API!$C$2:$C;;-1));"")',
         '=IF(G' + row + '=0;"";H' + row + '+P' + row + ')',
         '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;IF(M' + row + '=0;"";G' + row + '/M' + row + ');G' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))',
         '=IF(OR(G' + row + '=0;E' + row + '="");"";IF(G' + row + '>0;IF(M' + row + '=0;"";H' + row + '/M' + row + ');H' + row + '/VLOOKUP(E' + row + ';STOCK!$B$3:$G$9;3;FALSE)))'
@@ -1001,7 +1001,7 @@ function repararMontoUSCaja() {
 
   grupos.forEach(function(grupo) {
     var col = grupo.map(function(row) {
-      return ['=F' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A;BLUE_API!$C$2:$C;;-1)'];
+      return ['=IFERROR(F' + row + '/XLOOKUP(B' + row + ';BLUE_API!$A$2:$A;BLUE_API!$C$2:$C;;-1);"")'];
     });
     caja.getRange(grupo[0], 7, grupo.length, 1).setValues(col);
   });
@@ -1382,6 +1382,34 @@ function reclasificarCostosIndirectos() {
 // por script. Recorre las hojas y lista cualquier celda con valor de error.
 // UTILIDAD — diagnóstico puntual: para las fechas que dan #DIV/0! en las conversiones,
 // muestra qué cotización devuelve BLUE_API (si es 0, vacío, o no encuentra nada).
+// UTILIDAD — correr UNA VEZ. Envuelve en IFERROR las fórmulas de conversión a dólar
+// (CAJA columna G, BALANCE columna H) que ya están en la hoja, para que si el XLOOKUP
+// a BLUE_API no devuelve una cotización usable (ciertas fechas puntuales lo hacían
+// fallar), la celda quede vacía en vez de #DIV/0!. Esos #DIV/0! se propagaban en
+// cascada vía SUMIF a las columnas P/I/Q de BALANCE y a CLIENTES, así que blindar la
+// raíz limpia todos los errores de una. Idempotente: no re-blinda lo ya blindado.
+function blindarFormulasDolar() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var total = 0;
+  [{ hoja: 'CAJA', col: 7 }, { hoja: 'BALANCE', col: 8 }].forEach(function(o) {
+    var sheet = ss.getSheetByName(o.hoja);
+    if (!sheet) return;
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 3) return;
+    var formulas = sheet.getRange(3, o.col, lastRow - 2, 1).getFormulas();
+    for (var i = 0; i < formulas.length; i++) {
+      var f = formulas[i][0];
+      if (!f || f.indexOf('XLOOKUP') === -1 || f.indexOf('BLUE_API') === -1) continue;
+      if (f.indexOf('=IFERROR(') === 0) continue; // ya está blindada
+      var nueva = '=IFERROR(' + f.substring(1) + ';"")';
+      sheet.getRange(i + 3, o.col).setFormula(nueva); // sólo esta celda puntual
+      total++;
+    }
+  });
+  SpreadsheetApp.flush();
+  Logger.log('Listo — ' + total + ' fórmula(s) de conversión a dólar blindadas contra #DIV/0!.');
+}
+
 function diagnosticarDivCero() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var blue = ss.getSheetByName('BLUE_API');
