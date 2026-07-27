@@ -1172,12 +1172,14 @@ function normalizarRangosAbiertos() {
     var lastCol = sheet.getLastColumn();
     if (lastRow < 1 || lastCol < 1) return;
     var formulas = sheet.getRange(1, 1, lastRow, lastCol).getFormulas();
+    var diag = false;
     for (var r = 0; r < formulas.length; r++) {
       for (var c = 0; c < formulas[r].length; c++) {
         var f = formulas[r][c];
         if (!f) continue;
         // Sólo tocar fórmulas que referencian otra hoja con rango (evita reescribir de más)
         if (f.indexOf('BLUE_API!') === -1 && f.indexOf('CAJA!') === -1 && f.indexOf('BALANCE!') === -1) continue;
+        if (!diag) { Logger.log('  [' + nombre + '] primera fórmula cruda: ' + f); diag = true; }
         var nueva = abrir(f);
         if (nueva !== f) {
           sheet.getRange(r + 1, c + 1).setFormula(nueva);
