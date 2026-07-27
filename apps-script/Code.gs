@@ -1041,7 +1041,7 @@ function actualizarBlueApi() {
     return;
   }
   var data = JSON.parse(resp.getContentText());
-  var blue = Array.isArray(data) ? data.filter(function(d) { return d.source === 'blue'; }) : [];
+  var blue = Array.isArray(data) ? data.filter(function(d) { return d.source && String(d.source).toLowerCase() === 'blue'; }) : [];
   if (!blue.length) {
     Logger.log('La respuesta no trajo cotizaciones "blue" — revisar formato. Primeros 500 caracteres: ' + resp.getContentText().substring(0, 500));
     return;
