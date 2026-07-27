@@ -1139,33 +1139,53 @@ function normalizarFechasBlueApi() {
 // esas referencias a un RANGO ABIERTO ($A$2:$A, $C$2:$C) que nunca se desajusta,
 // sin importar cómo cambie BLUE_API. Escribe sólo en las celdas que realmente tienen
 // el patrón (nunca sobre un rango completo, para no repetir el borrado accidental).
-function normalizarRangosBlueApi() {
+// UTILIDAD — correr cuando se detecten rangos fijos problemáticos. Las fórmulas que
+// referencian OTRA hoja con un rango de filas FIJO (ej. CAJA!$I$3:$I999, o
+// BALANCE!$B$3:$B$369, o BLUE_API!$A$56:$A$4644) se rompen cuando esa hoja crece más
+// allá del tope, o cuando sus filas se corren. Esto reescribe esos rangos a RANGO
+// ABIERTO (ej. CAJA!$I$3:$I), inmune a crecimiento y desplazamiento. Cubre las
+// referencias a BLUE_API, CAJA y BALANCE. Escribe sólo en celdas puntuales que
+// realmente tienen el patrón (nunca sobre un rango completo).
+function normalizarRangosAbiertos() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var total = 0;
-  ['BALANCE', 'CAJA'].forEach(function(nombre) {
+
+  // Para cada hoja REFERENCIADA, el patrón que abre su rango. Fila de inicio se
+  // respeta ($2 para BLUE_API por el encabezado, $3 para CAJA/BALANCE por sus 2
+  // filas de encabezado); sólo se saca el tope fijo del final.
+  function abrir(formula) {
+    return formula
+      // BLUE_API: cualquier fila de inicio → $2 (dedup de encabezado), sin tope
+      .replace(/BLUE_API!\$A\$\d+:\$A\$?\d*/g, 'BLUE_API!$A$2:$A')
+      .replace(/BLUE_API!\$C\$\d+:\$C\$?\d*/g, 'BLUE_API!$C$2:$C')
+      // CAJA y BALANCE: respetar la fila de inicio, sacar sólo el tope
+      .replace(/(CAJA!\$[A-Z]+)\$(\d+):\$([A-Z]+)\$?\d+/g, '$1$$$2:$$$3')
+      .replace(/(BALANCE!\$[A-Z]+)\$(\d+):\$([A-Z]+)\$?\d+/g, '$1$$$2:$$$3');
+  }
+
+  ['BALANCE', 'CAJA', 'STOCK', 'CLIENTES'].forEach(function(nombre) {
     var sheet = ss.getSheetByName(nombre);
     if (!sheet) return;
     var lastRow = sheet.getLastRow();
-    if (lastRow < 2) return;
-    // La columna con la fórmula: H en BALANCE (col 8), G en CAJA (col 7)
-    var col = (nombre === 'BALANCE') ? 8 : 7;
-    var rango = sheet.getRange(2, col, lastRow - 1, 1);
-    var formulas = rango.getFormulas();
-    for (var i = 0; i < formulas.length; i++) {
-      var f = formulas[i][0];
-      if (!f || f.indexOf('BLUE_API') === -1) continue;
-      // Reemplazar cualquier rango BLUE_API!$X$n:$X$m (o $X$n:$X) por rango abierto
-      var nueva = f
-        .replace(/BLUE_API!\$A\$\d+:\$A(\$\d+)?/g, 'BLUE_API!$A$2:$A')
-        .replace(/BLUE_API!\$C\$\d+:\$C(\$\d+)?/g, 'BLUE_API!$C$2:$C');
-      if (nueva !== f) {
-        sheet.getRange(i + 2, col).setFormula(nueva); // sólo esta celda puntual
-        total++;
+    var lastCol = sheet.getLastColumn();
+    if (lastRow < 1 || lastCol < 1) return;
+    var formulas = sheet.getRange(1, 1, lastRow, lastCol).getFormulas();
+    for (var r = 0; r < formulas.length; r++) {
+      for (var c = 0; c < formulas[r].length; c++) {
+        var f = formulas[r][c];
+        if (!f) continue;
+        // Sólo tocar fórmulas que referencian otra hoja con rango (evita reescribir de más)
+        if (f.indexOf('BLUE_API!') === -1 && f.indexOf('CAJA!') === -1 && f.indexOf('BALANCE!') === -1) continue;
+        var nueva = abrir(f);
+        if (nueva !== f) {
+          sheet.getRange(r + 1, c + 1).setFormula(nueva);
+          total++;
+        }
       }
     }
   });
   SpreadsheetApp.flush();
-  Logger.log('Listo — ' + total + ' fórmula(s) de BALANCE/CAJA pasadas a rango abierto de BLUE_API.');
+  Logger.log('Listo — ' + total + ' fórmula(s) pasadas a rango abierto (BLUE_API / CAJA / BALANCE).');
 }
 
 function corregirFechasCOSemilla() {
