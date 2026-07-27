@@ -1061,7 +1061,9 @@ function actualizarBlueApi() {
   var filas = fechas.map(function(k) {
     var d = porFecha[k];
     var partes = k.split('-');
-    var fecha = new Date(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2])); // fecha pura, sin hora
+    // Mediodía (no medianoche) para que cualquier desfasaje de zona horaria al
+    // serializar no empuje la fecha al día anterior ni le meta una hora rara.
+    var fecha = new Date(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2]), 12, 0, 0);
     return [fecha, d.value_buy, d.value_sell]; // B=compra (value_buy), C=venta (value_sell)
   });
 
@@ -1069,6 +1071,7 @@ function actualizarBlueApi() {
   var lastRow = sheet.getLastRow();
   if (lastRow >= 2) sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).clearContent();
   sheet.getRange(2, 1, filas.length, 3).setValues(filas);
+  sheet.getRange(2, 1, filas.length, 1).setNumberFormat('dd/mm/yyyy'); // columna FECHA como fecha pura, sin hora
 
   Logger.log('Listo — BLUE_API reconstruida: ' + filas.length + ' fechas, de ' + fechas[fechas.length-1] + ' a ' + fechas[0] + '.');
 }
