@@ -1084,6 +1084,31 @@ function instalarTriggerBlueApi() {
   Logger.log('Listo — actualizarBlueApi() va a correr automáticamente todos los días alrededor de las 9am.');
 }
 
+// UTILIDAD — correr UNA VEZ para dejar uniforme la columna FECHA de BLUE_API.
+// La primera corrida de actualizarBlueApi (versión vieja) guardó el día con hora
+// (ej. 19/7 07:30:00) en vez de fecha pura como el resto de la tabla. Esto recorre
+// toda la columna A y, a cualquier celda que tenga hora, la deja en medianoche —
+// fecha pura, igual que las demás. No cambia el día, sólo le saca la hora.
+function normalizarFechasBlueApi() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BLUE_API');
+  if (!sheet) { Logger.log('No encontré la pestaña BLUE_API.'); return; }
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) { Logger.log('BLUE_API vacía.'); return; }
+
+  var rango = sheet.getRange(2, 1, lastRow - 1, 1);
+  var valores = rango.getValues();
+  var cambios = 0;
+  for (var i = 0; i < valores.length; i++) {
+    var v = valores[i][0];
+    if (v instanceof Date && (v.getHours() !== 0 || v.getMinutes() !== 0 || v.getSeconds() !== 0)) {
+      valores[i][0] = new Date(v.getFullYear(), v.getMonth(), v.getDate()); // misma fecha, medianoche
+      cambios++;
+    }
+  }
+  rango.setValues(valores);
+  Logger.log('Listo — ' + cambios + ' fecha(s) de BLUE_API normalizadas a fecha pura (sin hora).');
+}
+
 // transacción real y el resumen de CAJAS del pie de la hoja. Como no tienen fecha,
 // esa fórmula da #DIV/0! y ensucia cualquier búsqueda de errores. Esto las limpia,
 // tocando solamente filas donde FECHA está vacía (nunca una fila con datos reales).
