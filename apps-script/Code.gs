@@ -1047,43 +1047,30 @@ function actualizarBlueApi() {
     return;
   }
 
-  // Mapa de fechas ya cargadas (yyyy-MM-dd) para no duplicar.
+  // Reconstrucción completa: el endpoint trae TODO el histórico (desde 2011), que es
+  // la misma fuente de la que salió esta tabla. En vez de parchar filas sueltas —
+  // frágil y propenso a huecos/desorden — rearmamos la tabla entera limpia:
+  // deduplicada por fecha, ordenada descendente (más reciente arriba), fechas puras
+  // sin hora, y una sola escritura. Esto arregla de raíz cualquier desorden previo.
+  var porFecha = {};
+  blue.forEach(function(d) {
+    if (d.date && d.value_buy != null && d.value_sell != null) porFecha[d.date] = d; // dedup: última gana
+  });
+
+  var fechas = Object.keys(porFecha).sort().reverse(); // descendente (yyyy-MM-dd ordena bien como texto)
+  var filas = fechas.map(function(k) {
+    var d = porFecha[k];
+    var partes = k.split('-');
+    var fecha = new Date(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2])); // fecha pura, sin hora
+    return [fecha, d.value_buy, d.value_sell]; // B=compra (value_buy), C=venta (value_sell)
+  });
+
+  // Limpiar todo debajo del encabezado y reescribir de una sola vez.
   var lastRow = sheet.getLastRow();
-  var existentes = {};
-  var fechaMasReciente = null;
-  if (lastRow >= 2) {
-    sheet.getRange(2, 1, lastRow - 1, 1).getValues().forEach(function(r) {
-      if (r[0] instanceof Date) {
-        var key = Utilities.formatDate(r[0], 'America/Argentina/Mendoza', 'yyyy-MM-dd');
-        existentes[key] = true;
-        if (!fechaMasReciente || key > fechaMasReciente) fechaMasReciente = key;
-      }
-    });
-  }
-
-  // Sólo fechas que FALTAN. Para no insertar miles de filas históricas la primera vez
-  // (el endpoint trae todo el histórico desde ~2011), si la tabla ya tiene datos sólo
-  // consideramos fechas MÁS NUEVAS que la más reciente ya cargada — que es lo único
-  // que realmente falta rellenar. Si la tabla estuviera vacía, entran todas.
-  var faltantes = blue.filter(function(d) {
-    if (existentes[d.date]) return false;
-    if (fechaMasReciente && d.date <= fechaMasReciente) return false;
-    return true;
-  });
-  faltantes.sort(function(a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); }); // ascendente
-
-  if (!faltantes.length) { Logger.log('BLUE_API ya está al día — no falta ninguna fecha.'); return; }
-
-  // Escribir TODO de una sola vez: insertar el bloque de filas y setear el rango completo.
-  // Van en orden descendente (más nuevas arriba) para respetar el orden de la tabla.
-  faltantes.reverse();
-  var filas = faltantes.map(function(d) {
-    return [new Date(d.date + 'T00:00:00'), d.value_buy, d.value_sell]; // B=compra, C=venta
-  });
-  sheet.insertRowsAfter(1, filas.length);
+  if (lastRow >= 2) sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).clearContent();
   sheet.getRange(2, 1, filas.length, 3).setValues(filas);
 
-  Logger.log('Listo — ' + filas.length + ' fecha(s) agregada(s) a BLUE_API.');
+  Logger.log('Listo — BLUE_API reconstruida: ' + filas.length + ' fechas, de ' + fechas[fechas.length-1] + ' a ' + fechas[0] + '.');
 }
 
 // UTILIDAD — correr UNA VEZ a mano para activar la actualización diaria automática.
