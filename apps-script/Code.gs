@@ -1380,6 +1380,44 @@ function reclasificarCostosIndirectos() {
 // Apps Script). Es más confiable que descargar el archivo, porque la exportación a
 // xlsx de Google Drive a veces queda cacheada y no refleja los últimos cambios hechos
 // por script. Recorre las hojas y lista cualquier celda con valor de error.
+// UTILIDAD — diagnóstico puntual: para las fechas que dan #DIV/0! en las conversiones,
+// muestra qué cotización devuelve BLUE_API (si es 0, vacío, o no encuentra nada).
+function diagnosticarDivCero() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var blue = ss.getSheetByName('BLUE_API');
+  var lastRow = blue.getLastRow();
+  var data = blue.getRange(2, 1, lastRow - 1, 3).getValues(); // A=fecha, B=compra, C=venta
+
+  // Rango de fechas y ceros en BLUE_API
+  var ceros = 0, vacios = 0, minFecha = null, maxFecha = null;
+  for (var i = 0; i < data.length; i++) {
+    var f = data[i][0], v = data[i][2];
+    if (f instanceof Date) {
+      if (!minFecha || f < minFecha) minFecha = f;
+      if (!maxFecha || f > maxFecha) maxFecha = f;
+    }
+    if (v === 0) ceros++;
+    if (v === '' || v == null) vacios++;
+  }
+  Logger.log('BLUE_API: ' + data.length + ' filas, fechas de ' +
+    Utilities.formatDate(minFecha, 'GMT-3', 'dd/MM/yyyy') + ' a ' + Utilities.formatDate(maxFecha, 'GMT-3', 'dd/MM/yyyy') +
+    '. Venta en cero: ' + ceros + ', vacía: ' + vacios);
+
+  // Para 2/7/2022, 12/5/2023 (fechas de CAJA G47/G193), ver qué cotización hay ese día o el previo
+  [new Date(2022, 6, 2), new Date(2023, 4, 12)].forEach(function(objetivo) {
+    var mejor = null;
+    for (var j = 0; j < data.length; j++) {
+      var f = data[j][0];
+      if (f instanceof Date && f <= objetivo) {
+        if (!mejor || f > mejor[0]) mejor = [f, data[j][2]];
+      }
+    }
+    if (mejor) Logger.log('Para ' + Utilities.formatDate(objetivo, 'GMT-3', 'dd/MM/yyyy') + ' → cotización más cercana previa: ' +
+      Utilities.formatDate(mejor[0], 'GMT-3', 'dd/MM/yyyy') + ' = ' + mejor[1]);
+    else Logger.log('Para ' + Utilities.formatDate(objetivo, 'GMT-3', 'dd/MM/yyyy') + ' → NO hay cotización previa en BLUE_API');
+  });
+}
+
 function diagnosticarErrores() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var hojas = ['BALANCE', 'CAJA', 'STOCK', 'CLIENTES', 'BLUE_API', 'DINAMICOS'];
