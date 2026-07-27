@@ -1376,6 +1376,33 @@ function reclasificarCostosIndirectos() {
 
 // como si la venta nunca se hubiera cargado. Verifica que la fila 379 sea realmente
 // esa venta antes de tocar nada — si no coincide, no borra nada y avisa por Logger.
+// UTILIDAD — correr para ver el estado REAL de errores de la planilla (en vivo, desde
+// Apps Script). Es más confiable que descargar el archivo, porque la exportación a
+// xlsx de Google Drive a veces queda cacheada y no refleja los últimos cambios hechos
+// por script. Recorre las hojas y lista cualquier celda con valor de error.
+function diagnosticarErrores() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var hojas = ['BALANCE', 'CAJA', 'STOCK', 'CLIENTES', 'BLUE_API', 'DINAMICOS'];
+  var errores = ['#REF!', '#ERROR!', '#N/A', '#VALUE!', '#DIV/0!', '#NAME?', '#NULL!'];
+  hojas.forEach(function(nombre) {
+    var sheet = ss.getSheetByName(nombre);
+    if (!sheet) return;
+    var lastRow = sheet.getLastRow();
+    var lastCol = sheet.getLastColumn();
+    if (lastRow < 1 || lastCol < 1) { Logger.log(nombre + ': vacía'); return; }
+    var valores = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+    var encontrados = [];
+    for (var r = 0; r < valores.length; r++) {
+      for (var c = 0; c < valores[r].length; c++) {
+        if (errores.indexOf(valores[r][c]) !== -1) {
+          encontrados.push(sheet.getRange(r + 1, c + 1).getA1Notation() + '=' + valores[r][c]);
+        }
+      }
+    }
+    Logger.log(nombre + ': ' + encontrados.length + ' error(es)' + (encontrados.length ? ' → ' + encontrados.slice(0, 15).join(', ') : ' ✓'));
+  });
+}
+
 function deshacerVentaTest() {
   var balance  = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   var fila     = 379;
