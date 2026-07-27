@@ -1147,8 +1147,10 @@ function normalizarFechasBlueApi() {
 // referencias a BLUE_API, CAJA y BALANCE. Escribe sólo en celdas puntuales que
 // realmente tienen el patrón (nunca sobre un rango completo).
 function normalizarRangosAbiertos() {
+  Logger.log('== normalizarRangosAbiertos v2 (BLUE_API + CAJA + BALANCE) ==');
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var total = 0;
+  var muestras = [];
 
   // Para cada hoja REFERENCIADA, el patrón que abre su rango. Fila de inicio se
   // respeta ($2 para BLUE_API por el encabezado, $3 para CAJA/BALANCE por sus 2
@@ -1180,11 +1182,13 @@ function normalizarRangosAbiertos() {
         if (nueva !== f) {
           sheet.getRange(r + 1, c + 1).setFormula(nueva);
           total++;
+          if (muestras.length < 3) muestras.push(nombre + '!' + sheet.getRange(r + 1, c + 1).getA1Notation() + ': ' + f.substring(0, 55) + ' → ' + nueva.substring(0, 55));
         }
       }
     }
   });
   SpreadsheetApp.flush();
+  muestras.forEach(function(m) { Logger.log('  ejemplo: ' + m); });
   Logger.log('Listo — ' + total + ' fórmula(s) pasadas a rango abierto (BLUE_API / CAJA / BALANCE).');
 }
 
