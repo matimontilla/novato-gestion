@@ -1069,8 +1069,15 @@ function actualizarBlueApi() {
 
   // Limpiar todo debajo del encabezado y reescribir de una sola vez.
   var lastRow = sheet.getLastRow();
-  if (lastRow >= 2) sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).clearContent();
-  sheet.getRange(2, 1, filas.length, 3).setValues(filas);
+  if (lastRow >= 2) {
+    var viejo = sheet.getRange(2, 1, lastRow - 1, Math.max(sheet.getLastColumn(), 3));
+    viejo.clearContent();
+    viejo.clearFormat(); // saca bandas de color / formato condicional viejo que hacían ver filas "vacías"
+  }
+  var destino = sheet.getRange(2, 1, filas.length, 3);
+  destino.setValues(filas);
+  destino.setFontColor('#000000'); // texto negro visible (el formato viejo lo tenía casi blanco)
+  destino.setBackground(null);     // fondo uniforme
   sheet.getRange(2, 1, filas.length, 1).setNumberFormat('dd/mm/yyyy'); // columna FECHA como fecha pura, sin hora
 
   Logger.log('Listo — BLUE_API reconstruida: ' + filas.length + ' fechas, de ' + fechas[fechas.length-1] + ' a ' + fechas[0] + '.');
