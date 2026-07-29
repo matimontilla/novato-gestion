@@ -117,6 +117,31 @@ async function gasGet(params) {
   return r.json();
 }
 
+// Arma la lista de contactos para el selector, filtrada por el detalle elegido y
+// ordenada por uso más reciente. contactosBalance viene como [{nombre,detalles:[{detalle,ultima}],ultimaFecha}].
+// Si hay un detalle seleccionado, prioriza (arriba, ordenados por su última fecha CON ESE detalle)
+// los contactos ya usados con ese detalle; después agrega el resto (por si el contacto es nuevo
+// para ese detalle pero existe). Los clientes de la pestaña CLIENTES se suman al final si no estaban.
+function contactosParaDetalle(contactosBalance, clientes, detalle) {
+  const lista = Array.isArray(contactosBalance) ? contactosBalance : [];
+  const conDetalle = [];
+  const resto = [];
+  lista.forEach(c => {
+    const match = detalle ? (c.detalles || []).find(d => d.detalle === detalle) : null;
+    if (match) conDetalle.push({ nombre: c.nombre, orden: match.ultima });
+    else resto.push({ nombre: c.nombre, orden: c.ultimaFecha || 0 });
+  });
+  conDetalle.sort((a, b) => b.orden - a.orden);
+  resto.sort((a, b) => b.orden - a.orden);
+  // Nombres ya incluidos, para no duplicar
+  const vistos = new Set();
+  const out = [];
+  [...conDetalle, ...resto].forEach(x => { if (!vistos.has(x.nombre)) { vistos.add(x.nombre); out.push(x.nombre); } });
+  // Clientes de la pestaña CLIENTES que no aparecieron (nuevos, sin operaciones aún) van al final
+  (clientes || []).forEach(c => { if (c.nombre && !vistos.has(c.nombre)) { vistos.add(c.nombre); out.push(c.nombre); } });
+  return out;
+}
+
 // ── HOOKS ────────────────────────────────────────────────────────────────
 function useDolarBlue() {
   const [tc,setTc]=useState(null);const [err,setErr]=useState(false);const [date,setDate]=useState(null);
@@ -527,6 +552,38 @@ function DashboardScreen({onNavigate,price,source,productos,last,operacionesPend
           <div style={{borderTop:`1px solid ${C.border}`,paddingTop:8,fontSize:12,color:C.green,fontFamily:'system-ui'}}>✓ Stock coincide con lo teórico</div>
         )}
       </div>
+      {(()=>{
+        // Resumen de cuentas abiertas en ARS. Para ventas, saldoArs>0 = nos deben (por
+        // cobrar). Para compras, saldoArs es negativo y -saldoArs = lo que debemos (por
+        // pagar). Sobrepagos/créditos se netean solos por el signo.
+        let porCobrar=0, porPagar=0;
+        (operacionesPendientes||[]).forEach(op=>{
+          if(op.tipo==='venta') porCobrar+=op.saldoArs;
+          else porPagar+=(-op.saldoArs);
+        });
+        const neto=porCobrar-porPagar;
+        if(!operacionesPendientes||operacionesPendientes.length===0) return null;
+        return (
+          <>
+            <SL>Balance de cuentas abiertas</SL>
+            <div style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:12,padding:'14px 16px',marginBottom:16}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0'}}>
+                <span style={{color:C.muted,fontSize:13,fontFamily:'system-ui'}}>Por cobrar</span>
+                <span style={{color:'#7dce9b',fontSize:14,fontFamily:'system-ui',fontWeight:700}}>+${Math.round(porCobrar).toLocaleString('es-AR')}</span>
+              </div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',borderTop:`1px solid ${C.border}`}}>
+                <span style={{color:C.muted,fontSize:13,fontFamily:'system-ui'}}>Por pagar</span>
+                <span style={{color:'#f08080',fontSize:14,fontFamily:'system-ui',fontWeight:700}}>-${Math.round(porPagar).toLocaleString('es-AR')}</span>
+              </div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0 2px',borderTop:`2px solid ${C.border}`,marginTop:4}}>
+                <span style={{color:C.gold,fontSize:13,fontFamily:'system-ui',fontWeight:700}}>Neto</span>
+                <span style={{color:neto>=0?'#7dce9b':'#f08080',fontSize:16,fontFamily:'Georgia, serif',fontWeight:700}}>{neto>=0?'+':'-'}${Math.abs(Math.round(neto)).toLocaleString('es-AR')}</span>
+              </div>
+              <div style={{color:C.dim,fontSize:10,fontFamily:'system-ui',marginTop:6,textAlign:'right'}}>{neto>=0?'a favor en el corto-mediano plazo':'a cubrir en el corto-mediano plazo'}</div>
+            </div>
+          </>
+        );
+      })()}
       <SL>Operaciones pendientes</SL>
       <div style={{display:'flex',flexDirection:'column',gap:8}}>
         {operacionesPendientes.slice(0,8).map((op,i)=>{
@@ -577,7 +634,7 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
   const tipoBadge=catInfo?.tipo||'Ingreso';
 
   const listaDetalles = categorias?.length ? categorias.map(c=>c.detalle) : ['Venta'];
-  const listaContactos = Array.from(new Set([...(clientes?.map(c=>c.nombre)||[]), ...(contactosBalance||[])])).sort((a,b)=>a.localeCompare(b,'es'));
+  const listaContactos = contactosParaDetalle(contactosBalance, clientes, f.detalle);
   const clienteInfo = esVenta ? clientes?.find(c=>c.nombre===f.contacto) : null;
   const setContacto = (nombre) => {
     setF(p=>({...p, contacto:nombre, canal: clientes?.find(c=>c.nombre===nombre)?.canal || p.canal }));
@@ -701,7 +758,7 @@ function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,comprasPendien
   useEffect(()=>{cargarMovimientos();},[]);
   const set=(k,v)=>setF(p=>({...p,[k]:v,...((k==='detalle'||k==='contacto')?{referencia:''}:{})}));
   const listaDetalles = categorias?.length ? categorias.map(c=>c.detalle) : ['Cobro','Gasto'];
-  const listaContactos = Array.from(new Set([...(clientes?.map(c=>c.nombre)||[]), ...(contactosBalance||[])])).sort((a,b)=>a.localeCompare(b,'es'));
+  const listaContactos = contactosParaDetalle(contactosBalance, clientes, f.detalle);
   const submit=async()=>{
     if(!f.monto||!f.detalle||!f.contacto||(f.contacto==='Nuevo…'&&!f.contactoNuevo)){showToast('Completá los campos obligatorios','error');return;}
     const ct=f.contacto==='Nuevo…'?f.contactoNuevo:f.contacto;

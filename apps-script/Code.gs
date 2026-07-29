@@ -115,20 +115,37 @@ function getCategoriasBalance() {
   return lista;
 }
 
-// Contactos reales (SUBDETALLE) vistos en BALANCE — clientes Y proveedores mezclados,
-// para el selector de "Cliente/Proveedor" del formulario general de transacciones.
+// Contactos reales (SUBDETALLE) vistos en BALANCE, con el/los DETALLE con que se
+// usó cada uno y su última fecha de uso. El frontend usa esto para: (a) filtrar el
+// selector de contacto según el detalle elegido, y (b) ordenar por uso más reciente.
+// Devuelve [{nombre, detalles:[...], ultimaFecha:ms}], del más reciente al más viejo.
 function getContactosBalance() {
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   if (!balance) return [];
   var lastRow = balance.getLastRow();
   if (lastRow < 3) return [];
-  var data = balance.getRange(3, 4, lastRow - 2, 1).getValues(); // D SUBDETALLE
-  var vistos = {}, lista = [];
+  var data = balance.getRange(3, 2, lastRow - 2, 3).getValues(); // B..D: FECHA, DETALLE, SUBDETALLE
+  var mapa = {}; // nombre -> {nombre, detalles:{det:ultimaFechaConEseDetalle}, ultimaFecha}
   for (var i = 0; i < data.length; i++) {
-    var v = data[i][0];
-    if (v && !vistos[v]) { vistos[v] = true; lista.push(v); }
+    var fecha = data[i][0], detalle = data[i][1], nombre = data[i][2];
+    if (!nombre) continue;
+    var ms = (fecha instanceof Date) ? fecha.getTime() : 0;
+    if (!mapa[nombre]) mapa[nombre] = { nombre: nombre, detalles: {}, ultimaFecha: 0 };
+    var reg = mapa[nombre];
+    if (ms > reg.ultimaFecha) reg.ultimaFecha = ms;
+    if (detalle) {
+      if (!reg.detalles[detalle] || ms > reg.detalles[detalle]) reg.detalles[detalle] = ms;
+    }
   }
-  lista.sort();
+  var lista = [];
+  for (var k in mapa) {
+    var r = mapa[k];
+    // detalles como lista de {detalle, ultima} para poder filtrar y ordenar en el front
+    var dets = [];
+    for (var d in r.detalles) dets.push({ detalle: d, ultima: r.detalles[d] });
+    lista.push({ nombre: r.nombre, detalles: dets, ultimaFecha: r.ultimaFecha });
+  }
+  lista.sort(function(a, b) { return b.ultimaFecha - a.ultimaFecha; }); // más reciente primero
   return lista;
 }
 
