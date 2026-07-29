@@ -119,27 +119,27 @@ async function gasGet(params) {
 
 // Arma la lista de contactos para el selector, filtrada por el detalle elegido y
 // ordenada por uso más reciente. contactosBalance viene como [{nombre,detalles:[{detalle,ultima}],ultimaFecha}].
-// Si hay un detalle seleccionado, prioriza (arriba, ordenados por su última fecha CON ESE detalle)
-// los contactos ya usados con ese detalle; después agrega el resto (por si el contacto es nuevo
-// para ese detalle pero existe). Los clientes de la pestaña CLIENTES se suman al final si no estaban.
+// Si hay un detalle seleccionado, muestra SOLO los contactos ya usados con ese detalle
+// (ordenados por su última fecha con ese detalle). Si no hay detalle elegido, muestra
+// todos por uso reciente. Para un contacto nuevo para ese detalle siempre está "Nuevo…".
 function contactosParaDetalle(contactosBalance, clientes, detalle) {
   const lista = Array.isArray(contactosBalance) ? contactosBalance : [];
-  const conDetalle = [];
-  const resto = [];
-  lista.forEach(c => {
-    const match = detalle ? (c.detalles || []).find(d => d.detalle === detalle) : null;
-    if (match) conDetalle.push({ nombre: c.nombre, orden: match.ultima });
-    else resto.push({ nombre: c.nombre, orden: c.ultimaFecha || 0 });
-  });
-  conDetalle.sort((a, b) => b.orden - a.orden);
-  resto.sort((a, b) => b.orden - a.orden);
-  // Nombres ya incluidos, para no duplicar
-  const vistos = new Set();
-  const out = [];
-  [...conDetalle, ...resto].forEach(x => { if (!vistos.has(x.nombre)) { vistos.add(x.nombre); out.push(x.nombre); } });
-  // Clientes de la pestaña CLIENTES que no aparecieron (nuevos, sin operaciones aún) van al final
-  (clientes || []).forEach(c => { if (c.nombre && !vistos.has(c.nombre)) { vistos.add(c.nombre); out.push(c.nombre); } });
-  return out;
+  if (!detalle) {
+    // Sin detalle: todos, por uso reciente, con los clientes de la pestaña al final si faltan.
+    const orden = [...lista].sort((a, b) => (b.ultimaFecha || 0) - (a.ultimaFecha || 0)).map(c => c.nombre);
+    const vistos = new Set(orden);
+    (clientes || []).forEach(c => { if (c.nombre && !vistos.has(c.nombre)) { vistos.add(c.nombre); orden.push(c.nombre); } });
+    return orden;
+  }
+  // Con detalle: sólo los que ya se usaron con ese detalle, por fecha de ese uso.
+  return lista
+    .map(c => {
+      const match = (c.detalles || []).find(d => d.detalle === detalle);
+      return match ? { nombre: c.nombre, orden: match.ultima } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.orden - a.orden)
+    .map(x => x.nombre);
 }
 
 // ── HOOKS ────────────────────────────────────────────────────────────────
