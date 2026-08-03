@@ -207,12 +207,52 @@ código no se guardó bien. Un `Logger.log` con la versión al inicio despeja la
 
 ---
 
-## 6. Convenciones de la app
+## 6. Trabajando con Claude en este proyecto
+
+### Verificar, no recordar
+
+**Regla:** todo dato numérico sobre la planilla, el código o el negocio se verifica
+leyendo la fuente antes de afirmarlo. Nunca citar cifras de memoria.
+
+**Por qué:** un número inventado que suena plausible es peor que un "no sé", porque
+dispara análisis equivocados que cuestan tiempo. Caso real: se afirmó de memoria un
+saldo pendiente de $1.362.917 en `CCI22-001`; el valor real era $156.909. Se
+descubrió recién cuando el usuario mandó una captura de la planilla, después de
+varios intercambios de análisis sobre una cifra falsa.
+
+En la práctica:
+
+- Datos de la planilla → leerlos con Apps Script (`diagnosticarErrores()`, etc.)
+- Estado del código → abrirlo, no recordarlo
+- Cualquier cosa posterior al corte de conocimiento del modelo → buscar en la web
+- Al dar un número, aclarar si fue **verificado** o **recordado**
+
+No aplica a razonamiento (discutir un criterio contable, analizar una fórmula): ahí
+verificar no aporta y sólo hace lento el intercambio.
+
+### Corte de conocimiento
+
+Cada modelo tiene una fecha de corte fija que **no se actualiza**; sólo cambia si se
+cambia de modelo. Claude Opus 5: **mayo 2026**.
+
+Los meses cercanos al corte están peor cubiertos que los anteriores — Anthropic
+distingue entre *reliable knowledge cutoff* (hasta donde el conocimiento es confiable)
+y *training data cutoff* (rango más amplio, con los últimos meses "delgados").
+
+Todo lo posterior es ciego salvo que se busque en la web. Preguntarle al modelo por su
+propia versión no es confiable: en esta conversación reportó ser Opus 4.8 estando en
+Opus 5, y negó la existencia de Opus 5 hasta que una búsqueda lo desmintió.
+
+### Elección de modelo
+
+- **Opus** para backend, fórmulas financieras, reconciliación — donde un error tiene
+  costo real
+- **Sonnet** alcanza de sobra para UI y frontend
+
+### Convenciones de la app
 
 - Estética: fondo casi negro, acentos dorados (etiqueta Novato), tipografía Georgia serif
 - Comunicación del proyecto en español
-- Modelo sugerido: **Opus** para backend / fórmulas / reconciliación (donde un error
-  tiene costo financiero real); **Sonnet** alcanza para UI y frontend
 - Productos con stock 0 se ocultan de los selectores
 - Signos: cobro positivo, gasto negativo. Verde `+` / rojo `-`. Sobrepago se muestra
   distinto (azul, "a favor") de deuda real.
