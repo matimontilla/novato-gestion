@@ -27,7 +27,7 @@ const vacio = () => Object.fromEntries(UBICACIONES.map(u=>[u,0]));
 const PRODUCTOS_SEED = [
   { id:'mb21', label:'Malbec 2021',     max:2964, hex:'#6B2030', stockUbic:{...vacio()} },
   { id:'mb22', label:'Malbec 2022',     max:3818, hex:'#9B2335', stockUbic:{...vacio(),'R Peña':2964,'Pipi':30,'Lucas':15} },
-  { id:'mb23', label:'Malbec 2023',     max:3960, hex:'#C04050', stockUbic:{...vacio(),'R Peña':3960} },
+  { id:'mb23', label:'Blend 2023',      max:3960, hex:'#C04050', stockUbic:{...vacio(),'R Peña':3960} },
   { id:'cf21', label:'Cab. Franc 2021', max:972,  hex:'#4A1528', stockUbic:{...vacio()} },
   { id:'cf22', label:'Cab. Franc 2022', max:2834, hex:'#7B2040', stockUbic:{...vacio(),'R Peña':894,'Pipi':18,'Lucas':15} },
   { id:'ch22', label:'Chardonnay 2022', max:2208, hex:'#C4A84F', stockUbic:{...vacio()} },

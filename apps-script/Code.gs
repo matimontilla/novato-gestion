@@ -21,7 +21,7 @@ var UBICACIONES = ['R Peña','Pipi','Lucas','Santi','Mati'];
 var PRODUCTO_APP_TO_SHEET = {
   'Malbec 2021':      'Malbec 2021',
   'Malbec 2022':      'Malbec 2022',
-  'Malbec 2023':      'Malbec 2023',
+  'Blend 2023':       'Blend 2023',
   'Cab. Franc 2021':  'Cabernet Franc 2021',
   'Cab. Franc 2022':  'Cabernet Franc 2022',
   'Chardonnay 2022':  'Chardonnay 2022'
@@ -1370,7 +1370,7 @@ function reclasificarCostosIndirectos() {
       referencias[i][0] = 'CCI23-001';
       detalles[i][0] = 'CO';
       cambiosCO++;
-    } else if (prod === 'Malbec 2023') {
+    } else if (prod === 'Blend 2023') {
       referencias[i][0] = 'SEM23-001';
       cambiosSem++;
     } else if (sub === 'Envio') {
@@ -1413,7 +1413,7 @@ function reclasificarCostosIndirectos() {
   balance.getRange(filaSem, 2).setValue(hoy);
   balance.getRange(filaSem, 3).setValue('CI');
   balance.getRange(filaSem, 4).setValue('Semilla');
-  balance.getRange(filaSem, 5).setValue('Malbec 2023');
+  balance.getRange(filaSem, 5).setValue('Blend 2023');
   balance.getRange(filaSem, 7).setValue(totalSem);
   balance.getRange(filaSem, 12).setValue('SEM23-001');
   balance.getRange(filaSem, 13).setValue(0);
