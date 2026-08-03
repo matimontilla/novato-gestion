@@ -329,9 +329,13 @@ function nextReferencia(prefix) {
 // filas nuevas (addTransaccion) como para reparar filas rotas (repararBalance). IMPORTANTE:
 // este Sheet usa configuración regional en español → los argumentos de función van
 // separados por PUNTO Y COMA (;), no coma. Escribir con comas produce #ERROR!.
-// incluirSaldo=false se usa para filas que comparten referencia con otras (multi-
-// producto, o costos prorrateados tipo CCI22-001): el saldo se maneja agregado por
-// referencia en getVentasPendientes/getComprasPendientes, no fila por fila.
+// El saldo (O/P) se calcula por fila con SUMIFS filtrando por referencia Y por
+// producto. Esto funciona igual para operaciones de un solo producto (donde el filtro
+// de producto no cambia nada) y para multi-producto (donde cada línea resta sólo los
+// cobros de SU producto, porque addMovement reparte el cobro por producto en CAJA).
+// Así cada fila muestra su propio saldo, saldo US$ y rentabilidad por TC, sin doble
+// conteo. El parámetro incluirSaldo se mantiene sólo para las filas que legítimamente
+// no deben tener saldo (costos prorrateados sin cobro asociado, tipo CI/CO).
 function escribirFormulasBalance(row, incluirSaldo) {
   if (incluirSaldo === undefined) incluirSaldo = true;
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
@@ -345,9 +349,9 @@ function escribirFormulasBalance(row, incluirSaldo) {
   balance.getRange(row, 14).setValue('=IF(G' + row + '>0;"Ingreso";(IF(G' + row + '=0;"Movimiento";"Egreso")))'); // N CONCEPTO
   if (incluirSaldo) {
     balance.getRange(row, 15, 1, 3).setValues([[
-      '=IF(G' + row + '=0;"";G' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$F$3:$F))',                     // O SALDO $
-      '=IF(G' + row + '=0;"";-(H' + row + '-SUMIF(CAJA!$I$3:$I;L' + row + ';CAJA!$G$3:$G)))',                  // P SALDO US$
-      '=IF(G' + row + '=0;"";IF(N' + row + '="Egreso";-P' + row + '/H' + row + ';P' + row + '/H' + row + '))' // Q % DIF POR TC
+      '=IF(G' + row + '=0;"";G' + row + '-SUMIFS(CAJA!$F$3:$F;CAJA!$I$3:$I;L' + row + ';CAJA!$E$3:$E;E' + row + '))',   // O SALDO $ (por referencia + producto)
+      '=IF(G' + row + '=0;"";-(H' + row + '-SUMIFS(CAJA!$G$3:$G;CAJA!$I$3:$I;L' + row + ';CAJA!$E$3:$E;E' + row + ')))', // P SALDO US$ (por referencia + producto)
+      '=IF(G' + row + '=0;"";IF(N' + row + '="Egreso";-P' + row + '/H' + row + ';P' + row + '/H' + row + '))'          // Q % DIF POR TC
     ]]);
   } else {
     balance.getRange(row, 15, 1, 3).setValues([['', '', '']]);
@@ -466,7 +470,7 @@ function addTransaccion(p) {
     balance.getRange(row, 13).setValue(botellas);               // M BOTELLAS
     balance.getRange(row, 1).setValue(p.user || '');            // A: quién lo cargó
 
-    escribirFormulasBalance(row, !multiLinea);
+    escribirFormulasBalance(row, true); // saldo por fila (SUMIFS filtra por producto, sin doble conteo aunque sea multi-producto)
 
     if (productoSheet && botellas > 0) {
       ajustarStockUbicacion(linea.producto, linea.deposito || 'R Peña', null, botellas);
@@ -1437,6 +1441,43 @@ function reclasificarCostosIndirectos() {
 // fallar), la celda quede vacía en vez de #DIV/0!. Esos #DIV/0! se propagaban en
 // cascada vía SUMIF a las columnas P/I/Q de BALANCE y a CLIENTES, así que blindar la
 // raíz limpia todos los errores de una. Idempotente: no re-blinda lo ya blindado.
+// UTILIDAD — correr UNA VEZ tras el cambio a saldo por producto (SUMIFS). Reescribe
+// las fórmulas de saldo (O/P/Q + I) en las filas de BALANCE que corresponden a ventas
+// o compras reales pero que tenían el saldo vacío por ser multi-producto (cargadas con
+// la lógica anterior, ej. la operación de Santi). Identifica esas filas: tienen
+// MONTO $, REFERENCIA y PRODUCTO, pero la celda O (SALDO $) está vacía. No toca las
+// filas de costos prorrateados (CI/CO), que legítimamente no llevan saldo — esas se
+// reconocen porque su DETALLE es 'CI' o 'CO'.
+function repararSaldosMultiproducto() {
+  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  if (!balance) { Logger.log('No hay BALANCE.'); return; }
+  var lastRow = balance.getLastRow();
+  if (lastRow < 3) return;
+
+  var data = balance.getRange(3, 1, lastRow - 2, 15).getValues(); // A..O
+  var reparadas = 0;
+  for (var i = 0; i < data.length; i++) {
+    var fila     = i + 3;
+    var detalle  = data[i][2];  // C
+    var producto = data[i][4];  // E
+    var montoArs = data[i][6];  // G
+    var refer    = data[i][11]; // L
+    var saldoO   = data[i][14]; // O SALDO $
+
+    // Sólo filas que: tienen monto y referencia, NO son costos prorrateados (CI/CO),
+    // y hoy tienen el saldo vacío (las multi-producto viejas).
+    if (!refer) continue;
+    if (detalle === 'CI' || detalle === 'CO') continue;
+    if (!(Number(montoArs) || 0)) continue;
+    if (saldoO !== '' && saldoO !== null) continue; // ya tiene saldo, no tocar
+
+    escribirFormulasBalance(fila, true);
+    reparadas++;
+  }
+  SpreadsheetApp.flush();
+  Logger.log('Listo — ' + reparadas + ' fila(s) multi-producto con saldo reparado (ahora muestran saldo $, US$ y % dif TC por producto).');
+}
+
 function blindarFormulasDolar() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var total = 0;
