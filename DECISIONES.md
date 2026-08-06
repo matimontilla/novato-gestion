@@ -256,5 +256,3 @@ Opus 5, y negó la existencia de Opus 5 hasta que una búsqueda lo desmintió.
 - Productos con stock 0 se ocultan de los selectores
 - Signos: cobro positivo, gasto negativo. Verde `+` / rojo `-`. Sobrepago se muestra
   distinto (azul, "a favor") de deuda real.
-
-<!-- token renovado julio 2026 -->
