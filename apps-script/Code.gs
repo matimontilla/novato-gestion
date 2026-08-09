@@ -1536,6 +1536,40 @@ function diagnosticarDivCero() {
   });
 }
 
+// UTILIDAD — diagnóstico del cuadro "CAJAS" del pie de la pestaña CAJA. Muestra, para
+// cada celda del bloque, si tiene FÓRMULA (viva, se actualiza sola) o un VALOR pegado
+// (congelado, queda desactualizado). Sirve para detectar cuando alguien pegó números
+// encima de las fórmulas.
+function diagnosticarCuadroCajas() {
+  var caja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CAJA');
+  if (!caja) { Logger.log('No hay CAJA.'); return; }
+  var lastRow = caja.getLastRow();
+  var colB = caja.getRange(1, 2, lastRow, 1).getValues();
+
+  var inicio = -1;
+  for (var i = 0; i < colB.length; i++) {
+    if (colB[i][0] === 'CAJAS') { inicio = i + 1; break; } // fila real (1-indexed)
+  }
+  if (inicio === -1) { Logger.log('No encontré el bloque CAJAS.'); return; }
+  Logger.log('Bloque CAJAS empieza en la fila ' + inicio);
+
+  // Mostrar 12 filas desde el encabezado, columnas B..E
+  var filas = Math.min(12, lastRow - inicio + 1);
+  var formulas = caja.getRange(inicio, 2, filas, 4).getFormulas();
+  var valores  = caja.getRange(inicio, 2, filas, 4).getValues();
+  for (var r = 0; r < filas; r++) {
+    var partes = [];
+    for (var c = 0; c < 4; c++) {
+      var col = String.fromCharCode(66 + c); // B, C, D, E
+      var f = formulas[r][c];
+      var v = valores[r][c];
+      if (f) partes.push(col + ': [FÓRMULA] ' + f);
+      else if (v !== '' && v !== null) partes.push(col + ': [valor] ' + v);
+    }
+    if (partes.length) Logger.log('  fila ' + (inicio + r) + ' → ' + partes.join('  |  '));
+  }
+}
+
 function diagnosticarErrores() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var hojas = ['BALANCE', 'CAJA', 'STOCK', 'CLIENTES', 'BLUE_API', 'DINAMICOS'];
