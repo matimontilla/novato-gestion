@@ -1540,6 +1540,49 @@ function diagnosticarDivCero() {
 // cada celda del bloque, si tiene FÓRMULA (viva, se actualiza sola) o un VALOR pegado
 // (congelado, queda desactualizado). Sirve para detectar cuando alguien pegó números
 // encima de las fórmulas.
+// UTILIDAD — restaura las fórmulas de la columna AR$ del cuadro "CAJAS" del pie de la
+// pestaña CAJA. En algún momento se pegaron valores encima de las fórmulas y el cuadro
+// dejó de actualizarse (quedó, por ejemplo, LUDICO en 0.0012 — residuo de coma flotante
+// de la fórmula original).
+//
+// IMPORTANTE — sólo toca la columna C (AR$), NUNCA la D (USD):
+//   · AR$  = calculado, suma histórica de todos los movimientos de esa caja
+//   · USD  = DECLARADO a mano, porque depende del tipo de cambio al que se compraron
+//            los dólares, si vinieron de cripto, etc. No es derivable del histórico.
+//
+// Busca el bloque por texto para no romperse si las filas se corren.
+function repararCuadroCajasArs() {
+  var caja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CAJA');
+  if (!caja) { Logger.log('No hay CAJA.'); return; }
+  var lastRow = caja.getLastRow();
+  var colB = caja.getRange(1, 2, lastRow, 1).getValues();
+
+  var filaCajas = -1;
+  for (var i = 0; i < colB.length; i++) {
+    if (colB[i][0] === 'CAJAS') { filaCajas = i + 1; break; }
+  }
+  if (filaCajas === -1) { Logger.log('No encontré el bloque CAJAS.'); return; }
+
+  // Recorrer desde el encabezado hasta TOTAL:, escribiendo la fórmula de cada caja.
+  var primera = null, ultima = null, filaTotal = null;
+  for (var f = filaCajas + 1; f <= lastRow; f++) {
+    var nombre = colB[f - 1][0];
+    if (!nombre) continue;
+    if (nombre === 'TOTAL:') { filaTotal = f; break; }
+    if (nombre === 'AR$' || nombre === 'USD') continue; // fila de sub-encabezados
+    caja.getRange(f, 3).setFormula('=SUMIF(CAJA!$H$3:$H;$B' + f + ';CAJA!$F$3:$F)'); // C AR$
+    if (primera === null) primera = f;
+    ultima = f;
+  }
+
+  if (primera === null) { Logger.log('No encontré filas de cajas para reparar.'); return; }
+  if (filaTotal) caja.getRange(filaTotal, 3).setFormula('=SUM(C' + primera + ':C' + ultima + ')');
+
+  SpreadsheetApp.flush();
+  Logger.log('Listo — AR$ reparado en filas ' + primera + ' a ' + ultima +
+             (filaTotal ? ', total en fila ' + filaTotal : '') + '. La columna USD quedó intacta (es declarada).');
+}
+
 function diagnosticarCuadroCajas() {
   var caja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CAJA');
   if (!caja) { Logger.log('No hay CAJA.'); return; }
