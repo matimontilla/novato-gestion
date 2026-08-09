@@ -141,6 +141,28 @@ generaban 10 errores en cascada. Blindar la raíz limpia todo.
 
 ## 3. Arquitectura de datos
 
+### Cuadro "CAJAS" — pesos calculados, dólares declarados
+
+El bloque resumen al pie de la pestaña CAJA tiene **dos criterios distintos** por
+columna, y es intencional:
+
+| Columna | Criterio | Por qué |
+|---|---|---|
+| **C (AR$)** | **Calculado** — `=SUMIF(CAJA!$H$3:$H;$B<fila>;CAJA!$F$3:$F)` | El saldo en pesos es simplemente la suma histórica de todo lo que pasó por esa caja |
+| **D (USD)** | **Declarado a mano** | Depende del tipo de cambio al que se compraron esos dólares, si vinieron de cripto, etc. **No es derivable** del histórico de movimientos |
+
+**No convertir la columna USD en fórmula.** Parece una inconsistencia a corregir, pero
+es una decisión deliberada: automatizarla daría un número incorrecto, porque el valor
+de esos dólares depende de cómo se adquirieron, no de cuántos pesos se movieron.
+
+Antecedente: en algún momento se pegaron valores encima de las fórmulas de AR$ y el
+cuadro dejó de actualizarse (síntoma delator: LUDICO quedó en `0.0012` — residuo de
+coma flotante de la fórmula original). Reparación: `repararCuadroCajasArs()`, que
+sólo toca la columna C.
+
+`getResumenCajas()` **lee** este bloque, no lo calcula — si los valores están mal en
+la planilla, la app los muestra mal.
+
 ### Operaciones multi-producto
 
 Una operación (venta o compra) con varios productos = **varias filas de BALANCE con la
