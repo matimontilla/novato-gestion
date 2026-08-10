@@ -469,6 +469,9 @@ function addTransaccion(p) {
     balance.getRange(row, 12).setValue(referencia);             // L REFERENCIA (compartida entre líneas)
     balance.getRange(row, 13).setValue(botellas);               // M BOTELLAS
     balance.getRange(row, 1).setValue(p.user || '');            // A: quién lo cargó
+    // S DEPOSITO — de qué depósito salieron las botellas. Sólo tiene sentido si hubo
+    // movimiento físico de stock; si no hay botellas, queda vacío.
+    if (botellas > 0) balance.getRange(row, 19).setValue(linea.deposito || 'R Peña');
 
     escribirFormulasBalance(row, true); // saldo por fila (SUMIFS filtra por producto, sin doble conteo aunque sea multi-producto)
 
@@ -1551,6 +1554,84 @@ function diagnosticarDivCero() {
 //            los dólares, si vinieron de cripto, etc. No es derivable del histórico.
 //
 // Busca el bloque por texto para no romperse si las filas se corren.
+// UTILIDAD — correr UNA VEZ. Prepara el encabezado de la columna S (DEPOSITO) en
+// BALANCE, donde a partir de ahora se guarda de qué depósito salieron las botellas
+// en cada carga hecha desde la app.
+//
+// Se agrega AL FINAL (columna S, después de R AÑO) y no insertada al lado de PRODUCTO
+// a propósito: insertar una columna en el medio correría F..R, y el código escribe sus
+// fórmulas con letras de columna fijas, así que pasaría a escribir en las columnas
+// equivocadas. Mover la columna a mano después SÍ es seguro (Sheets ajusta las
+// referencias); insertar en el medio, no.
+//
+// Verifica que S esté libre antes de escribir: si ya hay otra cosa, avisa y no toca nada.
+// UTILIDAD — pone filtros en la fila de encabezados de CAJA, BALANCE y STOCK (CLIENTES
+// ya los tiene). Si una hoja ya tiene filtro, lo saca y lo vuelve a crear con el rango
+// actualizado, así cubre las filas nuevas.
+//
+// OJO al usarlos: filtrar es inofensivo, pero el menú del filtro también ofrece ORDENAR
+// (A-Z, Z-A), y eso reordena las filas FÍSICAMENTE y para todos. En BALANCE eso
+// desarmaría el orden cronológico (y la posición en que acomodaste a mano las filas de
+// CI/CO). Para explorar sin afectar la hoja, conviene usar Datos → Vistas de filtro,
+// que son personales y no cambian el orden real.
+function agregarFiltrosEncabezados() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  // Fila de encabezado por hoja (los datos arrancan en la siguiente)
+  var config = [
+    { hoja: 'BALANCE', filaEncabezado: 2 },
+    { hoja: 'CAJA',    filaEncabezado: 2 },
+    { hoja: 'STOCK',   filaEncabezado: 2 }
+  ];
+
+  config.forEach(function(c) {
+    var sheet = ss.getSheetByName(c.hoja);
+    if (!sheet) { Logger.log(c.hoja + ': no existe, salteada.'); return; }
+
+    var filtroExistente = sheet.getFilter();
+    if (filtroExistente) filtroExistente.remove(); // recrear con el rango actualizado
+
+    var lastRow = sheet.getLastRow();
+    var lastCol = sheet.getLastColumn();
+    if (lastRow <= c.filaEncabezado || lastCol < 1) { Logger.log(c.hoja + ': sin datos suficientes.'); return; }
+
+    sheet.getRange(c.filaEncabezado, 1, lastRow - c.filaEncabezado + 1, lastCol).createFilter();
+    Logger.log(c.hoja + ': filtro puesto en la fila ' + c.filaEncabezado + ' (hasta fila ' + lastRow + ', ' + lastCol + ' columnas).');
+  });
+
+  SpreadsheetApp.flush();
+  Logger.log('Listo. Recordá: filtrar es seguro, ORDENAR desde el filtro reordena las filas para todos.');
+}
+
+function prepararColumnaDeposito() {
+  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  if (!balance) { Logger.log('No hay BALANCE.'); return; }
+
+  var encabezado = balance.getRange(2, 19).getValue(); // S2
+  if (encabezado && String(encabezado).toUpperCase().indexOf('DEP') === -1) {
+    Logger.log('CUIDADO: la celda S2 ya tiene "' + encabezado + '". No toqué nada. ' +
+               'Revisá qué hay en la columna S antes de seguir.');
+    return;
+  }
+
+  // Chequear que no haya datos sueltos más abajo en la columna S
+  var lastRow = balance.getLastRow();
+  if (lastRow >= 3) {
+    var datos = balance.getRange(3, 19, lastRow - 2, 1).getValues();
+    var conDato = 0;
+    for (var i = 0; i < datos.length; i++) if (datos[i][0] !== '' && datos[i][0] !== null) conDato++;
+    if (conDato > 0 && !encabezado) {
+      Logger.log('CUIDADO: la columna S tiene ' + conDato + ' celda(s) con datos pero sin encabezado. ' +
+                 'No toqué nada — revisá qué hay ahí antes de seguir.');
+      return;
+    }
+  }
+
+  balance.getRange(2, 19).setValue('DEPOSITO');
+  SpreadsheetApp.flush();
+  Logger.log('Listo — encabezado DEPOSITO puesto en S2. Las cargas nuevas desde la app ' +
+             'van a registrar ahí de qué depósito salieron las botellas.');
+}
+
 function repararCuadroCajasArs() {
   var caja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CAJA');
   if (!caja) { Logger.log('No hay CAJA.'); return; }

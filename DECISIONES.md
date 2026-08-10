@@ -163,6 +163,37 @@ sólo toca la columna C.
 `getResumenCajas()` **lee** este bloque, no lo calcula — si los valores están mal en
 la planilla, la app los muestra mal.
 
+### Columna S (DEPOSITO) — por qué está al final y no al lado de PRODUCTO
+
+BALANCE registra en la columna **S** de qué depósito salieron las botellas en cada
+carga hecha desde la app (dato que antes se usaba para descontar stock y se descartaba).
+
+Está al final, después de `R AÑO`, y no insertada al lado de PRODUCTO donde sería más
+lógico visualmente. **Motivo:** insertar una columna en el medio corre F..R una
+posición. Sheets ajusta las fórmulas existentes, pero el código escribe sus fórmulas
+con **letras de columna fijas** (`G`, `H`, `M`, `O`...), así que pasaría a escribir en
+las columnas equivocadas — un desastre silencioso.
+
+> **Regla general: nunca insertar columnas en el medio de BALANCE o CAJA.** Agregar al
+> final es seguro. *Mover* una columna existente también lo es (Sheets reajusta las
+> referencias); lo que rompe es *insertar* y correr todo.
+
+Sólo se llena cuando hay botellas (si no hubo movimiento físico, queda vacío). En
+operaciones multi-producto, cada línea registra su propio depósito. No se llenó para
+atrás: aplica sólo a las cargas nuevas.
+
+Setup inicial: `prepararColumnaDeposito()`.
+
+### Filtros en encabezados
+
+`agregarFiltrosEncabezados()` pone filtros en BALANCE, CAJA y STOCK (CLIENTES ya los
+tenía).
+
+**Cuidado:** filtrar es inofensivo, pero el mismo menú ofrece **ordenar** (A-Z, Z-A), y
+eso reordena las filas físicamente **para todos**. En BALANCE eso desarmaría el orden
+cronológico y la posición en que se acomodaron a mano las filas de CI/CO. Para explorar
+sin afectar la hoja: **Datos → Vistas de filtro**, que son personales.
+
 ### Operaciones multi-producto
 
 Una operación (venta o compra) con varios productos = **varias filas de BALANCE con la
