@@ -962,6 +962,106 @@ function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,comprasPendien
   );
 }
 
+// ── DATOS / COSTEO ───────────────────────────────────────────────────────
+function DatosScreen({price,productos}){
+  const [data,setData]=useState(null); // null=cargando
+  useEffect(()=>{(async()=>{
+    if(!GAS_URL){setData({insumos:[],existe:false});return;}
+    try{ setData(await gasGet({action:'getInsumos'})); }
+    catch(e){ setData({insumos:[],existe:false,error:true}); }
+  })();},[]);
+
+  const totalArs=data?.totalArs||0;
+  const totalUsd=data?.totalUsd||0;
+  // Margen contra el precio de venta actual (última venta registrada)
+  const margen=price&&totalArs?price-totalArs:null;
+  const margenPct=price&&totalArs?((price-totalArs)/price*100):null;
+  const activos=(data?.insumos||[]).filter(i=>i.activo);
+  const sinCargar=activos.filter(i=>!i.cargado).length;
+  const desactualizados=activos.filter(i=>i.cargado&&i.diasDesde!==null&&i.diasDesde>60).length;
+
+  return(
+    <div style={{padding:'20px 16px 90px',maxWidth:500,margin:'0 auto'}}>
+      <div style={{color:C.text,fontWeight:700,fontSize:18,fontFamily:'Georgia, serif',marginBottom:2}}>Datos</div>
+      <div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',marginBottom:20}}>Costo de reposición y análisis</div>
+
+      {data===null&&<div style={{color:C.dim,fontSize:13,fontFamily:'system-ui',padding:'20px 0'}}>Cargando…</div>}
+
+      {data&&!data.existe&&(
+        <Card>
+          <SL>Costeo de reposición</SL>
+          <div style={{color:C.muted,fontSize:13,fontFamily:'system-ui',lineHeight:1.5}}>
+            Todavía no existe la pestaña <strong>INSUMOS</strong> en la planilla.
+            Corré <code style={{color:C.gold}}>crearHojaInsumos()</code> desde Apps Script y después cargá los precios ahí.
+          </div>
+        </Card>
+      )}
+
+      {data?.existe&&(
+        <>
+          <Card>
+            <SL>Costo por botella hoy</SL>
+            <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:4}}>
+              <span style={{color:C.gold,fontSize:30,fontFamily:'Georgia, serif',fontWeight:700}}>${Math.round(totalArs).toLocaleString('es-AR')}</span>
+              <span style={{color:C.dim,fontSize:14,fontFamily:'system-ui'}}>US${totalUsd.toFixed(2)}</span>
+            </div>
+            <div style={{color:C.dim,fontSize:11,fontFamily:'system-ui'}}>Suma de insumos activos, convertidos al dólar de hoy</div>
+
+            {price&&(
+              <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${C.border}`,fontFamily:'system-ui'}}>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:12,color:C.muted,padding:'3px 0'}}>
+                  <span>Precio de venta (última)</span><span>${Math.round(price).toLocaleString('es-AR')}</span>
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:12,color:C.muted,padding:'3px 0'}}>
+                  <span>Costo de reposición</span><span>-${Math.round(totalArs).toLocaleString('es-AR')}</span>
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:15,fontWeight:700,padding:'7px 0 0',borderTop:`1px solid ${C.border}`,marginTop:4}}>
+                  <span style={{color:C.gold}}>Margen por botella</span>
+                  <span style={{color:margen>=0?'#7dce9b':'#f08080'}}>
+                    {margen>=0?'+':'-'}${Math.abs(Math.round(margen)).toLocaleString('es-AR')}
+                    {margenPct!==null&&<span style={{fontSize:11,fontWeight:400,marginLeft:5}}>({margenPct.toFixed(0)}%)</span>}
+                  </span>
+                </div>
+              </div>
+            )}
+          </Card>
+
+          {(sinCargar>0||desactualizados>0)&&(
+            <div style={{background:C.wineBg,border:`1px solid ${C.wine}55`,borderRadius:10,padding:'10px 14px',margin:'12px 0',fontFamily:'system-ui',fontSize:12,color:'#E0A070',lineHeight:1.5}}>
+              {sinCargar>0&&<div>⚠ {sinCargar} insumo{sinCargar===1?'':'s'} sin precio cargado — el costo está incompleto.</div>}
+              {desactualizados>0&&<div>⚠ {desactualizados} precio{desactualizados===1?'':'s'} con más de 60 días.</div>}
+            </div>
+          )}
+
+          <Card style={{marginTop:12}}>
+            <SL>Insumos</SL>
+            {activos.length===0&&<div style={{color:C.dim,fontSize:12,fontFamily:'system-ui'}}>No hay insumos activos.</div>}
+            {activos.map((it,i)=>(
+              <div key={i} style={{display:'flex',justifyContent:'space-between',gap:8,padding:'8px 2px',borderTop:i?`1px solid ${C.border}`:'none',fontFamily:'system-ui'}}>
+                <div style={{minWidth:0}}>
+                  <div style={{color:it.cargado?C.text:C.dim,fontSize:13,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{it.nombre}</div>
+                  <div style={{color:C.dim,fontSize:10,marginTop:2}}>
+                    {it.cargado?`${it.moneda} ${it.costo.toLocaleString('es-AR')}`:'sin precio'}
+                    {it.fecha?` · ${it.fecha}`:''}
+                    {it.diasDesde!==null&&it.diasDesde>60?' ⚠':''}
+                    {it.proveedor?` · ${it.proveedor}`:''}
+                  </div>
+                </div>
+                <span style={{color:it.cargado?C.text:C.dim,fontSize:13,fontWeight:700,whiteSpace:'nowrap'}}>
+                  {it.cargado?`$${Math.round(it.costoArs).toLocaleString('es-AR')}`:'—'}
+                </span>
+              </div>
+            ))}
+            <div style={{color:C.dim,fontSize:10,fontFamily:'system-ui',marginTop:10,lineHeight:1.5}}>
+              Los precios se cargan en la pestaña INSUMOS de la planilla, ya divididos por botella.
+            </div>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── CONSULTAS IA ─────────────────────────────────────────────────────────
 function ConsultasScreen({price,productos}){
   const {tc}=useDolarBlue();
@@ -1008,7 +1108,7 @@ function ConsultasScreen({price,productos}){
 
 // ── NAV ──────────────────────────────────────────────────────────────────
 function Nav({screen,setScreen}){
-  const tabs=[{id:'dashboard',icon:'⌂',l:'Inicio'},{id:'venta',icon:'🍾',l:'Cargar'},{id:'caja',icon:'⇄',l:'Caja'},{id:'stock',icon:'📦',l:'Stock'},{id:'consultas',icon:'✦',l:'Asistente'}];
+  const tabs=[{id:'dashboard',icon:'⌂',l:'Inicio'},{id:'venta',icon:'🍾',l:'Cargar'},{id:'caja',icon:'⇄',l:'Caja'},{id:'stock',icon:'📦',l:'Stock'},{id:'datos',icon:'◫',l:'Datos'}];
   return(<div style={{position:'fixed',bottom:0,left:0,right:0,background:C.barrel,borderTop:`1px solid ${C.border}`,display:'flex',zIndex:200,paddingBottom:'env(safe-area-inset-bottom, 0px)'}}>{tabs.map(t=><button key={t.id} onClick={()=>setScreen(t.id)} style={{flex:1,padding:'10px 2px 12px',background:'none',border:'none',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:2}}><span style={{fontSize:t.id==='dashboard'?20:17,opacity:screen===t.id?1:0.35}}>{t.icon}</span><span style={{fontSize:9,fontFamily:'system-ui',color:screen===t.id?C.gold:C.dim,fontWeight:screen===t.id?700:400}}>{t.l}</span></button>)}</div>);
 }
 
@@ -1034,7 +1134,7 @@ export default function NovatoApp(){
         {screen==='venta'&&<VentaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} price={price} productos={productos} applySale={applySale} clientes={clientes} categorias={categorias} contactosBalance={contactosBalance} refresh={refresh}/>}
         {screen==='caja'&&<CajaScreen user={user} onBack={()=>setScreen('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes} comprasPendientes={comprasPendientes} refresh={refresh} resumenCajas={resumenCajas} categorias={categorias} contactosBalance={contactosBalance} clientes={clientes}/>}
         {screen==='stock'&&<StockScreen onBack={()=>setScreen('dashboard')} showToast={showToast} productos={productos} applyTransfer={applyTransfer} user={user} refresh={refresh} last={last} save={save}/>}
-        {screen==='consultas'&&<ConsultasScreen price={price} productos={productos}/>}
+        {screen==='datos'&&<DatosScreen price={price} productos={productos}/>}
       </div>
       <Nav screen={screen} setScreen={setScreen}/>
     </div>

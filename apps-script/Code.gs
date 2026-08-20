@@ -60,6 +60,7 @@ function doGet(e) {
     else if (action === 'getOps')        result = { ops: getRecentOps(20) };
     else if (action === 'getMovimientosCaja') result = { movimientos: getMovimientosCaja(100) };
     else if (action === 'getDetalleOperacion') result = getDetalleOperacion(e.parameter.referencia);
+    else if (action === 'getInsumos')    result = getInsumos();
     else                                 result = { error: 'Acción desconocida: ' + action };
   } catch(err) {
     result = { error: err.toString() };
@@ -618,6 +619,109 @@ function getOperacionesPendientes() {
     return ta - tb;
   });
   return todas;
+}
+
+// ── COSTEO DE REPOSICIÓN (hoja INSUMOS) ──────────────────────────────
+// UTILIDAD — correr UNA VEZ. Crea la pestaña INSUMOS, donde se cargan los insumos con
+// su costo POR BOTELLA ya convertido (ej. la caja de cartón entra entre 6, así que se
+// carga el precio de la caja dividido 6).
+//
+// Cada insumo se carga en la moneda que corresponda (ARS o USD) y las columnas E/F
+// calculan el equivalente en la otra moneda al DÓLAR DE HOY — no al de la fecha de
+// carga. El objetivo es el costo de REPOSICIÓN actual: si un corcho cuesta US$0,20,
+// reponerlo hoy cuesta 0,20 × dólar de hoy, sin importar cuándo se anotó ese precio.
+// La FECHA PRECIO sirve para saber qué tan viejo está el dato y cuándo actualizarlo.
+function crearHojaInsumos() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('INSUMOS');
+  if (sheet) { Logger.log('La pestaña INSUMOS ya existe — no la toco.'); return; }
+
+  sheet = ss.insertSheet('INSUMOS');
+  sheet.getRange(1, 1).setValue('COSTEO DE REPOSICIÓN — costo por botella de producto terminado');
+  sheet.getRange(1, 1, 1, 8).merge().setFontWeight('bold');
+
+  var headers = ['INSUMO', 'COSTO x BOT', 'MONEDA', 'FECHA PRECIO', 'COSTO ARS', 'COSTO USD', 'PROVEEDOR', 'ACTIVO'];
+  sheet.getRange(2, 1, 1, headers.length).setValues([headers])
+       .setFontWeight('bold').setBackground('#6B2030').setFontColor('#FFFFFF');
+
+  // Insumos típicos precargados, para que sólo haya que completar precios.
+  var tipicos = [
+    'Uva', 'Elaboración', 'Guarda / barrica', 'Análisis', 'Botella', 'Corcho / tapón',
+    'Cápsula', 'Etiqueta', 'Contraetiqueta', 'Caja de cartón (÷6)', 'Flete', 'Otros'
+  ];
+  var filas = tipicos.map(function(n) { return [n, '', 'ARS', '', '', '', '', 'SI']; });
+  sheet.getRange(3, 1, filas.length, 8).setValues(filas);
+
+  escribirFormulasInsumos(3, filas.length);
+
+  // Fila de TOTAL
+  var filaTotal = 3 + filas.length + 1;
+  sheet.getRange(filaTotal, 1).setValue('COSTO TOTAL POR BOTELLA').setFontWeight('bold');
+  sheet.getRange(filaTotal, 5).setFormula('=SUMIF($H$3:$H;"SI";E$3:E)').setFontWeight('bold');
+  sheet.getRange(filaTotal, 6).setFormula('=SUMIF($H$3:$H;"SI";F$3:F)').setFontWeight('bold');
+
+  sheet.setColumnWidth(1, 180);
+  sheet.setColumnWidth(7, 140);
+  sheet.getRange(3, 4, filas.length, 1).setNumberFormat('dd/mm/yyyy');
+  sheet.getRange(3, 5, filas.length + 2, 2).setNumberFormat('#,##0.00');
+  sheet.setFrozenRows(2);
+
+  Logger.log('Listo — pestaña INSUMOS creada con ' + filas.length + ' insumos típicos. ' +
+             'Completá COSTO x BOT (ya dividido por botella), MONEDA y FECHA PRECIO de cada uno. ' +
+             'Poné ACTIVO en NO para los que no quieras contar.');
+}
+
+// Escribe las fórmulas de conversión ARS<->USD al dólar de hoy en un rango de filas.
+function escribirFormulasInsumos(filaInicio, cantidad) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('INSUMOS');
+  if (!sheet) return;
+  var dolarHoy = 'XLOOKUP(MAX(BLUE_API!$A$2:$A);BLUE_API!$A$2:$A;BLUE_API!$C$2:$C)';
+  var formulas = [];
+  for (var i = 0; i < cantidad; i++) {
+    var f = filaInicio + i;
+    formulas.push([
+      '=IFERROR(IF($B' + f + '="";"";IF($C' + f + '="USD";$B' + f + '*' + dolarHoy + ';$B' + f + '));"")', // E COSTO ARS
+      '=IFERROR(IF($B' + f + '="";"";IF($C' + f + '="USD";$B' + f + ';$B' + f + '/' + dolarHoy + '));"")'  // F COSTO USD
+    ]);
+  }
+  sheet.getRange(filaInicio, 5, cantidad, 2).setFormulas(formulas);
+}
+
+// Lee la hoja INSUMOS para la pantalla de costeo de la app. Devuelve cada insumo con
+// su costo en ambas monedas, y los totales de los que están marcados ACTIVO=SI.
+function getInsumos() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('INSUMOS');
+  if (!sheet) return { insumos: [], totalArs: 0, totalUsd: 0, existe: false };
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 3) return { insumos: [], totalArs: 0, totalUsd: 0, existe: true };
+
+  var data = sheet.getRange(3, 1, lastRow - 2, 8).getValues();
+  var insumos = [], totalArs = 0, totalUsd = 0;
+  var hoy = new Date();
+  for (var i = 0; i < data.length; i++) {
+    var r = data[i];
+    var nombre = r[0];
+    if (!nombre || String(nombre).indexOf('COSTO TOTAL') === 0) continue; // saltear la fila de total
+    var activo = String(r[7] || '').toUpperCase() !== 'NO';
+    var costoArs = Number(r[4]) || 0;
+    var costoUsd = Number(r[5]) || 0;
+    var fecha = (r[3] instanceof Date) ? r[3] : null;
+    var diasDesde = fecha ? Math.floor((hoy - fecha) / 86400000) : null;
+    insumos.push({
+      nombre:    nombre,
+      costo:     Number(r[1]) || 0,
+      moneda:    r[2] || 'ARS',
+      fecha:     fecha ? formatDate(fecha) : '',
+      diasDesde: diasDesde,
+      costoArs:  costoArs,
+      costoUsd:  costoUsd,
+      proveedor: r[6] || '',
+      activo:    activo,
+      cargado:   !!(Number(r[1]) || 0)
+    });
+    if (activo) { totalArs += costoArs; totalUsd += costoUsd; }
+  }
+  return { insumos: insumos, totalArs: totalArs, totalUsd: totalUsd, existe: true };
 }
 
 // ── MOVIMIENTOS DE CAJA → CAJA ────────────────────────────────────────
