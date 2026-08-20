@@ -447,6 +447,16 @@ function TransferForm({productos,applyTransfer,user,showToast,onBack,refresh}){
 // ── DASHBOARD ────────────────────────────────────────────────────────────
 function DashboardScreen({onNavigate,price,source,productos,last,operacionesPendientes,resumenCajas}){
   const {tc,err:tcErr,date:tcDate}=useDolarBlue();
+  // Detalle de una operación (se abre al tocar una operación pendiente)
+  const [detalle,setDetalle]=useState(null);        // null=cerrado, {}=cargando, {...}=datos
+  const abrirDetalle=async(referencia)=>{
+    if(!referencia||!GAS_URL) return;
+    setDetalle({cargando:true,referencia});
+    try{
+      const d=await gasGet({action:'getDetalleOperacion',referencia});
+      setDetalle(d&&d.referencia?d:{error:true,referencia});
+    }catch(e){ setDetalle({error:true,referencia}); }
+  };
   const total=productos.reduce((s,p)=>s+totalStock(p),0);
   const productosOrdenados=[...productos].filter(p=>totalStock(p)>0).sort((a,b)=>totalStock(b)-totalStock(a)); // solo con stock, mayor a menor
   const ars=price?total*price:null; const usd=ars&&tc?Math.round(ars/tc):null;
@@ -596,7 +606,7 @@ function DashboardScreen({onNavigate,price,source,productos,last,operacionesPend
           const pendiente=esVenta?op.saldoArs:-op.saldoArs;
           const esCredito=pendiente<0;
           return (
-            <div key={op.referencia+'-'+i} style={{background:C.barrel,border:`1px solid ${vencida?'#f0808088':C.border}`,borderRadius:12,padding:'12px 14px',display:'flex',alignItems:'center',gap:12}}>
+            <div key={op.referencia+'-'+i} onClick={()=>abrirDetalle(op.referencia)} style={{background:C.barrel,border:`1px solid ${vencida?'#f0808088':C.border}`,borderRadius:12,padding:'12px 14px',display:'flex',alignItems:'center',gap:12,cursor:'pointer'}}>
               <span style={{fontSize:22,flexShrink:0}}>{esVenta?'🍾':'📋'}</span>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{color:C.text,fontSize:13,fontFamily:'system-ui',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{op.contraparte||'(sin nombre)'}{op.producto?` · ${op.producto}`:''}</div>
@@ -608,12 +618,87 @@ function DashboardScreen({onNavigate,price,source,productos,last,operacionesPend
                 </div>
                 {esCredito&&<div style={{fontSize:9,color:'#6ba3d6',fontFamily:'system-ui'}}>a favor</div>}
               </div>
+              <span style={{color:C.dim,fontSize:16,flexShrink:0}}>›</span>
             </div>
           );
         })}
         {operacionesPendientes.length===0&&<div style={{color:C.dim,fontSize:13,fontFamily:'system-ui',textAlign:'center',padding:'20px 0'}}>Sin operaciones pendientes</div>}
         {operacionesPendientes.length>8&&<div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',textAlign:'center',padding:'4px 0'}}>+{operacionesPendientes.length-8} más</div>}
       </div>
+
+      {detalle&&(
+        <div onClick={()=>setDetalle(null)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',zIndex:100,display:'flex',alignItems:'flex-end',justifyContent:'center'}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:'16px 16px 0 0',padding:'18px 16px 28px',width:'100%',maxWidth:500,maxHeight:'85vh',overflowY:'auto'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
+              <div style={{color:C.gold,fontSize:15,fontFamily:'Georgia, serif',fontWeight:700}}>Detalle de operación</div>
+              <button onClick={()=>setDetalle(null)} style={{background:'none',border:'none',color:C.muted,fontSize:22,cursor:'pointer',lineHeight:1,padding:'0 4px'}}>×</button>
+            </div>
+
+            {detalle.cargando&&<div style={{color:C.dim,fontSize:13,fontFamily:'system-ui',padding:'20px 0',textAlign:'center'}}>Cargando…</div>}
+            {detalle.error&&<div style={{color:'#f08080',fontSize:13,fontFamily:'system-ui',padding:'20px 0',textAlign:'center'}}>No se pudo cargar el detalle.</div>}
+
+            {!detalle.cargando&&!detalle.error&&detalle.lineas&&(
+              <>
+                <div style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:10,padding:'10px 12px',marginBottom:14,fontFamily:'system-ui'}}>
+                  <div style={{color:C.text,fontSize:14,fontWeight:700}}>{detalle.cabecera?.contacto||'(sin nombre)'}</div>
+                  <div style={{color:C.dim,fontSize:11,marginTop:3}}>
+                    {detalle.cabecera?.detalle} · {detalle.cabecera?.fecha} · ref {detalle.referencia}
+                    {detalle.cabecera?.user?` · cargó ${detalle.cabecera.user}`:''}
+                  </div>
+                </div>
+
+                <div style={{color:C.muted,fontSize:11,fontFamily:'system-ui',textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:6}}>Productos</div>
+                {detalle.lineas.map((l,i)=>(
+                  <div key={i} style={{padding:'8px 2px',borderTop:`1px solid ${C.border}`,fontFamily:'system-ui'}}>
+                    <div style={{display:'flex',justifyContent:'space-between',gap:8}}>
+                      <span style={{color:C.text,fontSize:13,fontWeight:600}}>{l.producto||'(sin producto)'}</span>
+                      <span style={{color:C.text,fontSize:13,fontWeight:700,whiteSpace:'nowrap'}}>${Math.abs(l.montoArs).toLocaleString('es-AR')}</span>
+                    </div>
+                    <div style={{color:C.dim,fontSize:11,marginTop:2}}>
+                      {l.botellas?`${l.botellas} bot`:'sin botellas'}
+                      {l.precioUnit?` · $${l.precioUnit.toLocaleString('es-AR')}/bot`:''}
+                      {l.deposito?` · desde ${l.deposito}`:''}
+                      {l.montoUsd?` · US$${Math.abs(l.montoUsd).toLocaleString('es-AR')}`:''}
+                    </div>
+                  </div>
+                ))}
+                <div style={{display:'flex',justifyContent:'space-between',padding:'8px 2px',borderTop:`2px solid ${C.border}`,fontFamily:'system-ui',fontSize:13}}>
+                  <span style={{color:C.muted}}>Total{detalle.totalBotellas?` (${detalle.totalBotellas} bot)`:''}</span>
+                  <span style={{color:C.text,fontWeight:700}}>${Math.abs(detalle.totalArs).toLocaleString('es-AR')}</span>
+                </div>
+
+                <div style={{color:C.muted,fontSize:11,fontFamily:'system-ui',textTransform:'uppercase',letterSpacing:'0.05em',margin:'16px 0 6px'}}>
+                  {detalle.totalArs>=0?'Cobros':'Pagos'} ({detalle.pagos.length})
+                </div>
+                {detalle.pagos.length===0&&<div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',padding:'6px 2px'}}>Todavía no se registró ninguno.</div>}
+                {detalle.pagos.map((p,i)=>(
+                  <div key={i} style={{display:'flex',justifyContent:'space-between',gap:8,padding:'7px 2px',borderTop:`1px solid ${C.border}`,fontFamily:'system-ui'}}>
+                    <div style={{minWidth:0}}>
+                      <div style={{color:C.text,fontSize:12,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{p.fecha} · {p.caja}</div>
+                      <div style={{color:C.dim,fontSize:10,marginTop:1}}>{p.producto||p.detalle}{p.user?` · ${p.user}`:''}</div>
+                    </div>
+                    <span style={{color:'#7dce9b',fontSize:12,fontWeight:700,whiteSpace:'nowrap'}}>${Math.abs(p.montoArs).toLocaleString('es-AR')}</span>
+                  </div>
+                ))}
+
+                <div style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:10,padding:'10px 12px',marginTop:16,fontFamily:'system-ui'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,color:C.muted,padding:'2px 0'}}>
+                    <span>Facturado</span><span>${Math.abs(detalle.totalArs).toLocaleString('es-AR')}</span>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,color:C.muted,padding:'2px 0'}}>
+                    <span>{detalle.totalArs>=0?'Cobrado':'Pagado'}</span><span>${Math.abs(detalle.pagadoArs).toLocaleString('es-AR')}</span>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:14,fontWeight:700,padding:'6px 0 0',borderTop:`1px solid ${C.border}`,marginTop:4}}>
+                    <span style={{color:C.gold}}>Saldo pendiente</span>
+                    <span style={{color:Math.abs(detalle.saldoArs)<1?'#7dce9b':'#f0c674'}}>${Math.abs(detalle.saldoArs).toLocaleString('es-AR')}</span>
+                  </div>
+                  {!!detalle.saldoUsd&&<div style={{color:C.dim,fontSize:10,textAlign:'right',marginTop:3}}>US${Math.abs(detalle.saldoUsd).toLocaleString('es-AR')}</div>}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

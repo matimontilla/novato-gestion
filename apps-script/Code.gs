@@ -59,6 +59,7 @@ function doGet(e) {
     else if (action === 'addStockControl') result = addStockControl(e.parameter);
     else if (action === 'getOps')        result = { ops: getRecentOps(20) };
     else if (action === 'getMovimientosCaja') result = { movimientos: getMovimientosCaja(100) };
+    else if (action === 'getDetalleOperacion') result = getDetalleOperacion(e.parameter.referencia);
     else                                 result = { error: 'Acción desconocida: ' + action };
   } catch(err) {
     result = { error: err.toString() };
@@ -879,6 +880,89 @@ function getRecentOps(n) {
 
   ops.sort(function(a, b) { return (b.ts || 0) - (a.ts || 0); });
   return ops.slice(0, n);
+}
+
+// Detalle completo de una operación (todas las filas de BALANCE con esa REFERENCIA,
+// más todos los cobros/pagos de CAJA vinculados). Para la vista de detalle que se abre
+// al tocar una operación pendiente en el dashboard.
+function getDetalleOperacion(referencia) {
+  if (!referencia) return { lineas: [], pagos: [] };
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // Líneas de BALANCE (una por producto)
+  var balance = ss.getSheetByName('BALANCE');
+  var lineas = [], cabecera = null;
+  if (balance) {
+    var lastRowB = balance.getLastRow();
+    if (lastRowB >= 3) {
+      var dataB = balance.getRange(3, 1, lastRowB - 2, 19).getValues(); // A..S
+      for (var i = 0; i < dataB.length; i++) {
+        var r = dataB[i];
+        if (r[11] !== referencia) continue; // L REFERENCIA
+        var botellas = Number(r[12]) || 0;  // M BOTELLAS
+        var montoArs = Number(r[6]) || 0;   // G MONTO $
+        lineas.push({
+          producto:  r[4] || '',                                    // E
+          botellas:  botellas,
+          montoArs:  Math.round(montoArs),
+          montoUsd:  Math.round(Number(r[7]) || 0),                  // H MONTO US$
+          precioUnit: botellas ? Math.round(montoArs / botellas) : null, // precio por botella
+          deposito:  r[18] || '',                                    // S DEPOSITO
+          fila:      i + 3
+        });
+        if (!cabecera) cabecera = {
+          fecha:    formatDate(r[1]),   // B
+          detalle:  r[2] || '',         // C
+          contacto: r[3] || '',         // D
+          user:     r[0] || ''          // A quién la cargó
+        };
+      }
+    }
+  }
+
+  // Cobros/pagos de CAJA vinculados a esa referencia
+  var caja = ss.getSheetByName('CAJA');
+  var pagos = [];
+  if (caja) {
+    var lastRowC = caja.getLastRow();
+    if (lastRowC >= 3) {
+      var dataC = caja.getRange(3, 1, lastRowC - 2, 9).getValues(); // A..I
+      for (var j = 0; j < dataC.length; j++) {
+        var c = dataC[j];
+        if (c[8] !== referencia) continue; // I REFERENCIA
+        if (!(c[1] instanceof Date)) continue;
+        pagos.push({
+          fecha:    formatDate(c[1]),          // B
+          detalle:  c[2] || '',                // C
+          producto: c[4] || '',                // E
+          montoArs: Math.round(Number(c[5]) || 0), // F
+          montoUsd: Math.round(Number(c[6]) || 0), // G
+          caja:     c[7] || '',                // H
+          user:     c[0] || ''                 // A
+        });
+      }
+    }
+  }
+
+  // Totales: lo facturado vs lo cobrado/pagado
+  var totalArs = 0, totalUsd = 0, totalBotellas = 0;
+  lineas.forEach(function(l) { totalArs += l.montoArs; totalUsd += l.montoUsd; totalBotellas += l.botellas; });
+  var pagadoArs = 0, pagadoUsd = 0;
+  pagos.forEach(function(p) { pagadoArs += p.montoArs; pagadoUsd += p.montoUsd; });
+
+  return {
+    referencia:   referencia,
+    cabecera:     cabecera || {},
+    lineas:       lineas,
+    pagos:        pagos,
+    totalArs:     Math.round(totalArs),
+    totalUsd:     Math.round(totalUsd),
+    totalBotellas: totalBotellas,
+    pagadoArs:    Math.round(pagadoArs),
+    pagadoUsd:    Math.round(pagadoUsd),
+    saldoArs:     Math.round(totalArs - pagadoArs),
+    saldoUsd:     Math.round(totalUsd - pagadoUsd)
+  };
 }
 
 // Últimos N movimientos reales de CAJA (cobros/gastos que cargaron los socios), del
