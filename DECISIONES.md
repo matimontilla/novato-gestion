@@ -253,10 +253,41 @@ código no se guardó bien. Un `Logger.log` con la versión al inicio despeja la
 
 ## 5. Fuera de alcance
 
-- **Pestaña DINAMICOS**: tablas dinámicas nativas de Sheets con `#REF!`. Se rearman a
-  mano, no por script.
 - **Filas vacías de buffer**: ya no hacen falta (las cargas insertan su propia fila).
   Si se limpian, conservar la fila de TOTALES de BALANCE y el bloque "CAJAS" de CAJA.
+
+### Pestaña DINAMICOS — obsoleta
+
+Tenía tablas dinámicas nativas de Sheets (con `#REF!` de arrastre) que se rearmaban a
+mano. Quedó reemplazada por la pestaña **Datos** de la app, que arma las mismas
+relaciones desde `getAnalytics()` y se actualiza sola.
+
+Antes de borrarla conviene: (1) buscar `DINAMICOS` en todas las hojas *dentro de
+fórmulas*, para confirmar que nadie la referencia — si algo la usa, borrarla deja
+`#REF!`; (2) sacar una captura por si había algún corte que la app no replica.
+Ocultarla en vez de borrarla es la opción reversible.
+
+---
+
+## 5b. Analytics (pestaña Datos)
+
+`getAnalytics()` hace todas las agregaciones en **una sola lectura** de BALANCE.
+Gráficos dibujados en SVG a mano, sin librería: para barras alcanza, no infla el
+bundle y respeta la estética de la app.
+
+**Dos criterios de lectura que importan:**
+
+- **Flujo anual ≠ rentabilidad.** Los costos de una añada se pagan antes de venderla,
+  así que un año de cosecha grande da "pérdida" y uno vendiendo stock viejo da
+  "ganancia". El flujo anual sirve para **liquidez**; la rentabilidad real se mide con
+  el **margen por añada** (lo vendido de esa añada contra lo que costó producirla).
+- **El margen por añada favorece a las añadas viejas**, que ya vendieron su stock. Una
+  añada reciente tiene todo el costo cargado y sólo parte de las ventas hechas.
+
+**Evolución de insumos:** sale de agrupar los egresos por DETALLE y añada usando la
+columna **CU US$** (costo de la operación ÷ botellas producidas). Depende de que el
+mismo insumo se cargue siempre con el mismo DETALLE — si a veces es "Etiquetas" y otras
+"Etiquetado", aparecen como dos series distintas.
 
 ---
 
