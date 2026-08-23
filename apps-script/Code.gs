@@ -662,6 +662,7 @@ function crearHojaInsumos() {
 
   sheet.setColumnWidth(1, 180);
   sheet.setColumnWidth(7, 140);
+  sheet.getRange(3, 2, filas.length, 1).setNumberFormat('#,##0.0000'); // B COSTO x BOT (USD/bot suele ser chico)
   sheet.getRange(3, 4, filas.length, 1).setNumberFormat('dd/mm/yyyy');
   sheet.getRange(3, 5, filas.length + 2, 2).setNumberFormat('#,##0.00');
   sheet.setFrozenRows(2);
@@ -689,6 +690,71 @@ function escribirFormulasInsumos(filaInicio, cantidad) {
 
 // Lee la hoja INSUMOS para la pantalla de costeo de la app. Devuelve cada insumo con
 // su costo en ambas monedas, y los totales de los que están marcados ACTIVO=SI.
+// UTILIDAD — repara los formatos de la hoja INSUMOS. Al crearla no se le puso formato
+// numérico explícito a la columna B (COSTO x BOT), así que alguna celda pudo quedar con
+// formato de fecha heredado y romper el cálculo. Esto fija: B como número (4 decimales,
+// porque los costos en USD por botella suelen ser chicos), D como fecha, E/F como número.
+// Sólo cambia FORMATOS, nunca valores. Si encuentra un valor que quedó convertido a
+// fecha de verdad, lo avisa por Logger para que se vuelva a tipear a mano.
+function repararFormatosInsumos() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('INSUMOS');
+  if (!sheet) { Logger.log('No existe la pestaña INSUMOS.'); return; }
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 3) { Logger.log('INSUMOS sin datos.'); return; }
+  var n = lastRow - 2;
+
+  sheet.getRange(3, 2, n, 1).setNumberFormat('#,##0.0000'); // B COSTO x BOT
+  sheet.getRange(3, 4, n, 1).setNumberFormat('dd/mm/yyyy'); // D FECHA PRECIO
+  sheet.getRange(3, 5, n, 2).setNumberFormat('#,##0.00');   // E/F convertidos
+
+  // Detectar valores que quedaron convertidos a fecha (el formato no los recupera)
+  var valores = sheet.getRange(3, 2, n, 1).getValues();
+  var rotos = [];
+  for (var i = 0; i < n; i++) {
+    if (valores[i][0] instanceof Date) rotos.push('B' + (i + 3));
+  }
+
+  SpreadsheetApp.flush();
+  if (rotos.length) {
+    Logger.log('Formatos corregidos, PERO estas celdas tienen una FECHA guardada en vez de un número: ' +
+               rotos.join(', ') + '. Volvé a tipear el precio en esas celdas a mano.');
+  } else {
+    Logger.log('Listo — formatos de INSUMOS corregidos. Ningún valor quedó convertido a fecha.');
+  }
+}
+
+// UTILIDAD — diagnóstico de la hoja INSUMOS. Muestra, celda por celda, el valor, el
+// TIPO de dato (número, texto, fecha) y el formato aplicado. Sirve para detectar
+// celdas que quedaron con formato de fecha y rompen los cálculos.
+function diagnosticarInsumos() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('INSUMOS');
+  if (!sheet) { Logger.log('No existe la pestaña INSUMOS.'); return; }
+  var lastRow = sheet.getLastRow();
+  var valores  = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
+  var formatos = sheet.getRange(2, 1, lastRow - 1, 8).getNumberFormats();
+  var formulas = sheet.getRange(2, 1, lastRow - 1, 8).getFormulas();
+
+  var cols = ['A INSUMO', 'B COSTO', 'C MONEDA', 'D FECHA', 'E ARS', 'F USD', 'G PROV', 'H ACTIVO'];
+  for (var i = 0; i < valores.length; i++) {
+    var fila = i + 2;
+    var partes = [];
+    for (var c = 0; c < 8; c++) {
+      var v = valores[i][c];
+      if (v === '' || v === null) continue;
+      var tipo = (v instanceof Date) ? 'FECHA' : (typeof v);
+      var fmt = formatos[i][c];
+      var marca = '';
+      // Señalar celdas sospechosas: número con formato de fecha, o fecha donde no va
+      if (c === 1 || c === 4 || c === 5) { // B, E, F deberían ser números
+        if (v instanceof Date) marca = '  <<< ES UNA FECHA, deberia ser numero';
+        else if (fmt && (fmt.indexOf('d') > -1 || fmt.indexOf('y') > -1) && fmt.indexOf('#') === -1) marca = '  <<< FORMATO DE FECHA';
+      }
+      partes.push(cols[c] + '=' + v + ' [' + tipo + ' fmt:' + fmt + ']' + (formulas[i][c] ? ' F:' + formulas[i][c].substring(0, 40) : '') + marca);
+    }
+    if (partes.length) Logger.log('fila ' + fila + ' → ' + partes.join('   |   '));
+  }
+}
+
 function getInsumos() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('INSUMOS');
   if (!sheet) return { insumos: [], totalArs: 0, totalUsd: 0, existe: false };

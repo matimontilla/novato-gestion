@@ -1001,10 +1001,24 @@ function DatosScreen({price,productos}){
         <>
           <Card>
             <SL>Costo por botella hoy</SL>
-            <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:4}}>
-              <span style={{color:C.gold,fontSize:30,fontFamily:'Georgia, serif',fontWeight:700}}>${Math.round(totalArs).toLocaleString('es-AR')}</span>
-              <span style={{color:C.dim,fontSize:14,fontFamily:'system-ui'}}>US${totalUsd.toFixed(2)}</span>
-            </div>
+            {(()=>{
+              const todosUsd=activos.length>0&&activos.filter(i=>i.cargado).every(i=>i.moneda==='USD');
+              return (
+                <div style={{display:'flex',alignItems:'baseline',gap:10,marginBottom:4}}>
+                  {todosUsd?(
+                    <>
+                      <span style={{color:C.gold,fontSize:30,fontFamily:'Georgia, serif',fontWeight:700}}>US${totalUsd.toFixed(2)}</span>
+                      <span style={{color:C.dim,fontSize:14,fontFamily:'system-ui'}}>${Math.round(totalArs).toLocaleString('es-AR')}</span>
+                    </>
+                  ):(
+                    <>
+                      <span style={{color:C.gold,fontSize:30,fontFamily:'Georgia, serif',fontWeight:700}}>${Math.round(totalArs).toLocaleString('es-AR')}</span>
+                      <span style={{color:C.dim,fontSize:14,fontFamily:'system-ui'}}>US${totalUsd.toFixed(2)}</span>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
             <div style={{color:C.dim,fontSize:11,fontFamily:'system-ui'}}>Suma de insumos activos, convertidos al dólar de hoy</div>
 
             {price&&(
