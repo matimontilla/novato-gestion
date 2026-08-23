@@ -962,13 +962,99 @@ function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,comprasPendien
   );
 }
 
+// ── GRÁFICOS (SVG a mano, sin dependencias) ─────────────────────────────
+// Barras verticales. datos: [{label, valor}]. fmt: función para formatear el valor.
+function BarChart({datos,fmt,color=C.gold,alto=150}){
+  if(!datos||datos.length===0) return <div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',padding:'16px 0',textAlign:'center'}}>Sin datos</div>;
+  const max=Math.max(...datos.map(d=>Math.abs(d.valor)),1);
+  const ancho=Math.max(datos.length*38,280);
+  const anchoBarra=Math.min(28,(ancho/datos.length)*0.65);
+  return(
+    <div style={{overflowX:'auto',paddingBottom:4}}>
+      <svg width={ancho} height={alto+38} style={{display:'block'}}>
+        {datos.map((d,i)=>{
+          const x=(i+0.5)*(ancho/datos.length);
+          const h=Math.abs(d.valor)/max*alto;
+          return(
+            <g key={i}>
+              <rect x={x-anchoBarra/2} y={alto-h} width={anchoBarra} height={Math.max(h,1)} rx={3} fill={d.valor<0?'#f08080':color} opacity={0.85}/>
+              <text x={x} y={alto-h-4} textAnchor="middle" fontSize="8" fill={C.muted} fontFamily="system-ui">{fmt?fmt(d.valor):Math.round(d.valor)}</text>
+              <text x={x} y={alto+14} textAnchor="middle" fontSize="9" fill={C.dim} fontFamily="system-ui">{d.label}</text>
+              {d.sub&&<text x={x} y={alto+26} textAnchor="middle" fontSize="8" fill={C.dim} fontFamily="system-ui" opacity={0.7}>{d.sub}</text>}
+            </g>
+          );
+        })}
+        <line x1="0" y1={alto} x2={ancho} y2={alto} stroke={C.border} strokeWidth="1"/>
+      </svg>
+    </div>
+  );
+}
+
+// Barras horizontales, mejor para rankings con nombres largos (clientes, productos).
+function BarChartH({datos,fmt,color=C.gold}){
+  if(!datos||datos.length===0) return <div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',padding:'16px 0',textAlign:'center'}}>Sin datos</div>;
+  const max=Math.max(...datos.map(d=>Math.abs(d.valor)),1);
+  return(
+    <div>
+      {datos.map((d,i)=>(
+        <div key={i} style={{marginBottom:9}}>
+          <div style={{display:'flex',justifyContent:'space-between',gap:8,marginBottom:3}}>
+            <span style={{color:C.text,fontSize:11,fontFamily:'system-ui',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.label}</span>
+            <span style={{color:C.muted,fontSize:11,fontFamily:'system-ui',fontWeight:700,whiteSpace:'nowrap'}}>{fmt?fmt(d.valor):Math.round(d.valor)}</span>
+          </div>
+          <div style={{height:6,background:C.barrel,borderRadius:3,overflow:'hidden'}}>
+            <div style={{height:'100%',width:`${Math.abs(d.valor)/max*100}%`,background:d.valor<0?'#f08080':color,borderRadius:3}}/>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Barras agrupadas de a dos (ej. ingresos vs egresos por año).
+function BarChartDoble({datos,fmt,colorA=C.gold,colorB='#f08080',labelA,labelB,alto=150}){
+  if(!datos||datos.length===0) return <div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',padding:'16px 0',textAlign:'center'}}>Sin datos</div>;
+  const max=Math.max(...datos.flatMap(d=>[Math.abs(d.a),Math.abs(d.b)]),1);
+  const ancho=Math.max(datos.length*62,280);
+  const bw=Math.min(20,(ancho/datos.length)*0.32);
+  return(
+    <div>
+      <div style={{display:'flex',gap:14,marginBottom:8,fontFamily:'system-ui',fontSize:10}}>
+        <span style={{color:C.muted}}><span style={{display:'inline-block',width:8,height:8,background:colorA,borderRadius:2,marginRight:4}}/>{labelA}</span>
+        <span style={{color:C.muted}}><span style={{display:'inline-block',width:8,height:8,background:colorB,borderRadius:2,marginRight:4}}/>{labelB}</span>
+      </div>
+      <div style={{overflowX:'auto',paddingBottom:4}}>
+        <svg width={ancho} height={alto+26} style={{display:'block'}}>
+          {datos.map((d,i)=>{
+            const cx=(i+0.5)*(ancho/datos.length);
+            const ha=Math.abs(d.a)/max*alto, hb=Math.abs(d.b)/max*alto;
+            return(
+              <g key={i}>
+                <rect x={cx-bw-2} y={alto-ha} width={bw} height={Math.max(ha,1)} rx={3} fill={colorA} opacity={0.85}/>
+                <rect x={cx+2} y={alto-hb} width={bw} height={Math.max(hb,1)} rx={3} fill={colorB} opacity={0.85}/>
+                <text x={cx} y={alto+15} textAnchor="middle" fontSize="9" fill={C.dim} fontFamily="system-ui">{d.label}</text>
+              </g>
+            );
+          })}
+          <line x1="0" y1={alto} x2={ancho} y2={alto} stroke={C.border} strokeWidth="1"/>
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 // ── DATOS / COSTEO ───────────────────────────────────────────────────────
 function DatosScreen({price,productos}){
   const [data,setData]=useState(null); // null=cargando
+  const [an,setAn]=useState(null);     // analytics
+  const [modoVentas,setModoVentas]=useState('ars');   // ars | usd | bot
+  const [escalaVentas,setEscalaVentas]=useState('mes'); // mes | anio
   useEffect(()=>{(async()=>{
-    if(!GAS_URL){setData({insumos:[],existe:false});return;}
+    if(!GAS_URL){setData({insumos:[],existe:false});setAn({});return;}
     try{ setData(await gasGet({action:'getInsumos'})); }
     catch(e){ setData({insumos:[],existe:false,error:true}); }
+    try{ setAn(await gasGet({action:'getAnalytics'})); }
+    catch(e){ setAn({}); }
   })();},[]);
 
   const totalArs=data?.totalArs||0;
@@ -1072,6 +1158,117 @@ function DatosScreen({price,productos}){
           </Card>
         </>
       )}
+
+      {an&&Object.keys(an).length>0&&(()=>{
+        const fmtArs=v=>`$${Math.round(v/1000)}k`;
+        const fmtUsd=v=>`US$${Math.round(v)}`;
+        const fmtBot=v=>`${Math.round(v)}`;
+        const fmtArsFull=v=>`$${Math.round(v).toLocaleString('es-AR')}`;
+
+        // Ventas: agrupar por mes o por año según la escala elegida
+        const serieVentas=(()=>{
+          const base=an.ventasMes||[];
+          if(escalaVentas==='anio'){
+            const porAnio={};
+            base.forEach(m=>{
+              if(!porAnio[m.anio]) porAnio[m.anio]={label:String(m.anio),ars:0,usd:0,botellas:0};
+              porAnio[m.anio].ars+=m.ars; porAnio[m.anio].usd+=m.usd; porAnio[m.anio].botellas+=m.botellas;
+            });
+            return Object.values(porAnio);
+          }
+          return base.slice(-14).map(m=>({label:m.periodo.slice(5)+'/'+m.periodo.slice(2,4),ars:m.ars,usd:m.usd,botellas:m.botellas}));
+        })();
+        const campo=modoVentas==='ars'?'ars':(modoVentas==='usd'?'usd':'botellas');
+        const fmtSel=modoVentas==='ars'?fmtArs:(modoVentas==='usd'?fmtUsd:fmtBot);
+
+        return(
+        <>
+          <Card style={{marginTop:12}}>
+            <SL>Ventas</SL>
+            <div style={{display:'flex',gap:6,marginBottom:12,flexWrap:'wrap'}}>
+              {[['ars','$'],['usd','US$'],['bot','Botellas']].map(([k,l])=>(
+                <button key={k} onClick={()=>setModoVentas(k)} style={{padding:'5px 12px',borderRadius:14,border:`1px solid ${modoVentas===k?C.gold:C.border}`,background:modoVentas===k?`${C.gold}22`:'none',color:modoVentas===k?C.gold:C.dim,fontSize:11,fontFamily:'system-ui',cursor:'pointer',fontWeight:modoVentas===k?700:400}}>{l}</button>
+              ))}
+              <span style={{flex:1}}/>
+              {[['mes','Mes'],['anio','Año']].map(([k,l])=>(
+                <button key={k} onClick={()=>setEscalaVentas(k)} style={{padding:'5px 12px',borderRadius:14,border:`1px solid ${escalaVentas===k?C.gold:C.border}`,background:escalaVentas===k?`${C.gold}22`:'none',color:escalaVentas===k?C.gold:C.dim,fontSize:11,fontFamily:'system-ui',cursor:'pointer',fontWeight:escalaVentas===k?700:400}}>{l}</button>
+              ))}
+            </div>
+            <BarChart datos={serieVentas.map(d=>({label:d.label,valor:d[campo]}))} fmt={fmtSel}/>
+          </Card>
+
+          <Card style={{marginTop:12}}>
+            <SL>Ventas por cliente</SL>
+            <BarChartH datos={(an.ventasCliente||[]).slice(0,10).map(c=>({label:c.cliente,valor:modoVentas==='usd'?c.usd:(modoVentas==='bot'?c.botellas:c.ars)}))} fmt={modoVentas==='usd'?fmtUsd:(modoVentas==='bot'?fmtBot:fmtArsFull)}/>
+            {(an.ventasCliente||[]).length>0&&(()=>{
+              const tot=an.ventasCliente.reduce((s,c)=>s+c.ars,0);
+              const top=an.ventasCliente[0];
+              const pct=tot?Math.round(top.ars/tot*100):0;
+              return <div style={{color:pct>40?'#E0A070':C.dim,fontSize:10,fontFamily:'system-ui',marginTop:10,lineHeight:1.5}}>
+                {pct>40?'⚠ ':''}{top.cliente} concentra el {pct}% de las ventas históricas.
+              </div>;
+            })()}
+          </Card>
+
+          <Card style={{marginTop:12}}>
+            <SL>Costo unitario por producto (US$)</SL>
+            <BarChartH datos={(an.costoProducto||[]).map(p=>({label:p.producto,valor:p.cuUsd}))} fmt={v=>`US$${v.toFixed(2)}`}/>
+            {totalUsd>0&&<div style={{color:C.dim,fontSize:10,fontFamily:'system-ui',marginTop:10,lineHeight:1.5}}>
+              Costo de reposición hoy: <strong style={{color:C.gold}}>US${totalUsd.toFixed(2)}</strong> por botella. Comparalo con el histórico de cada producto para ver la erosión.
+            </div>}
+          </Card>
+
+          <Card style={{marginTop:12}}>
+            <SL>Flujo por año (liquidez)</SL>
+            <BarChartDoble
+              datos={(an.flujoAnual||[]).map(f=>({label:String(f.anio),a:f.ingresosUsd,b:f.egresosUsd}))}
+              labelA="Ingresos US$" labelB="Egresos US$" colorA="#7dce9b" colorB="#f08080"/>
+            <div style={{color:C.dim,fontSize:10,fontFamily:'system-ui',marginTop:10,lineHeight:1.5}}>
+              Plata que entró y salió cada año. No mide rentabilidad: los costos de una añada se pagan antes de venderla.
+            </div>
+          </Card>
+
+          <Card style={{marginTop:12}}>
+            <SL>Margen por añada (US$)</SL>
+            <BarChartDoble
+              datos={(an.margenAnada||[]).map(m=>({label:m.anada,a:m.ventasUsd,b:m.costosUsd}))}
+              labelA="Vendido" labelB="Costó" colorA="#7dce9b" colorB="#f08080"/>
+            {(an.margenAnada||[]).map((m,i)=>(
+              <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'6px 2px',borderTop:`1px solid ${C.border}`,fontFamily:'system-ui',fontSize:12}}>
+                <span style={{color:C.muted}}>{m.anada}<span style={{color:C.dim,fontSize:10}}>{m.botellasVendidas?` · ${m.botellasVendidas} bot`:''}</span></span>
+                <span style={{color:m.margenUsd>=0?'#7dce9b':'#f08080',fontWeight:700}}>{m.margenUsd>=0?'+':'-'}US${Math.abs(m.margenUsd).toLocaleString('es-AR')}</span>
+              </div>
+            ))}
+            <div style={{color:C.dim,fontSize:10,fontFamily:'system-ui',marginTop:10,lineHeight:1.5}}>
+              Cada añada: todo lo que se vendió contra todo lo que costó producirla. Las añadas nuevas todavía tienen stock por vender.
+            </div>
+          </Card>
+
+          {(an.insumosAnada||[]).length>0&&(
+            <Card style={{marginTop:12}}>
+              <SL>Costo de insumos por añada (US$/botella)</SL>
+              {(()=>{
+                const porInsumo={};
+                (an.insumosAnada||[]).forEach(x=>{
+                  if(!porInsumo[x.insumo]) porInsumo[x.insumo]=[];
+                  porInsumo[x.insumo].push(x);
+                });
+                const nombres=Object.keys(porInsumo).sort();
+                return nombres.map(n=>(
+                  <div key={n} style={{marginBottom:14}}>
+                    <div style={{color:C.text,fontSize:12,fontFamily:'system-ui',fontWeight:600,marginBottom:6}}>{n}</div>
+                    <BarChart datos={porInsumo[n].map(x=>({label:x.anada,valor:x.cuUsd}))} fmt={v=>`$${v.toFixed(2)}`} alto={70}/>
+                  </div>
+                ));
+              })()}
+              <div style={{color:C.dim,fontSize:10,fontFamily:'system-ui',lineHeight:1.5}}>
+                Costo unitario real de cada insumo por añada. Los que más suben en dólares son candidatos a stockear.
+              </div>
+            </Card>
+          )}
+        </>
+        );
+      })()}
     </div>
   );
 }

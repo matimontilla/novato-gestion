@@ -61,6 +61,7 @@ function doGet(e) {
     else if (action === 'getMovimientosCaja') result = { movimientos: getMovimientosCaja(100) };
     else if (action === 'getDetalleOperacion') result = getDetalleOperacion(e.parameter.referencia);
     else if (action === 'getInsumos')    result = getInsumos();
+    else if (action === 'getAnalytics')  result = getAnalytics();
     else                                 result = { error: 'Acción desconocida: ' + action };
   } catch(err) {
     result = { error: err.toString() };
@@ -619,6 +620,122 @@ function getOperacionesPendientes() {
     return ta - tb;
   });
   return todas;
+}
+
+// ── ANALYTICS PARA LA PESTAÑA DATOS ──────────────────────────────────
+// Todas las agregaciones para los gráficos, en UNA sola lectura de BALANCE.
+// Columnas usadas: B fecha, C detalle, D subdetalle, E producto, F añada, G monto$,
+// H montoUS$, K CU US$, M botellas, N concepto.
+function getAnalytics() {
+  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  if (!balance) return {};
+  var lastRow = balance.getLastRow();
+  if (lastRow < 3) return {};
+  var data = balance.getRange(3, 1, lastRow - 2, 19).getValues();
+
+  var ventasMes = {}, ventasCliente = {}, flujoAnio = {}, anadaVentas = {}, anadaCostos = {},
+      costoProducto = {}, insumosAnada = {}, ventasProducto = {};
+
+  for (var i = 0; i < data.length; i++) {
+    var r        = data[i];
+    var fecha    = r[1];
+    var detalle  = r[2] || '';
+    var contacto = r[3] || '';
+    var producto = r[4] || '';
+    var anada    = String(r[5] || '').trim();
+    var montoArs = Number(r[6]) || 0;
+    var montoUsd = Number(r[7]) || 0;
+    var cuUsd    = Number(r[10]) || 0;
+    var botellas = Number(r[12]) || 0;
+    var concepto = r[13] || '';
+    if (!(fecha instanceof Date)) continue;
+    var anio = fecha.getFullYear();
+
+    // Flujo por año calendario (liquidez): ingresos vs egresos
+    if (!flujoAnio[anio]) flujoAnio[anio] = { anio: anio, ingresosArs: 0, egresosArs: 0, ingresosUsd: 0, egresosUsd: 0 };
+    if (montoArs > 0) { flujoAnio[anio].ingresosArs += montoArs; flujoAnio[anio].ingresosUsd += montoUsd; }
+    else if (montoArs < 0) { flujoAnio[anio].egresosArs += -montoArs; flujoAnio[anio].egresosUsd += -montoUsd; }
+
+    if (detalle === 'Venta') {
+      // Ventas por mes
+      var mes = anio + '-' + ('0' + (fecha.getMonth() + 1)).slice(-2);
+      if (!ventasMes[mes]) ventasMes[mes] = { periodo: mes, anio: anio, ars: 0, usd: 0, botellas: 0 };
+      ventasMes[mes].ars += montoArs; ventasMes[mes].usd += montoUsd; ventasMes[mes].botellas += botellas;
+
+      // Ventas por cliente
+      var cli = contacto || '(sin nombre)';
+      if (!ventasCliente[cli]) ventasCliente[cli] = { cliente: cli, ars: 0, usd: 0, botellas: 0, operaciones: 0 };
+      ventasCliente[cli].ars += montoArs; ventasCliente[cli].usd += montoUsd;
+      ventasCliente[cli].botellas += botellas; ventasCliente[cli].operaciones++;
+
+      // Ventas por producto (para meses de inventario / margen)
+      if (producto) {
+        if (!ventasProducto[producto]) ventasProducto[producto] = { producto: producto, ars: 0, usd: 0, botellas: 0 };
+        ventasProducto[producto].ars += montoArs; ventasProducto[producto].usd += montoUsd;
+        ventasProducto[producto].botellas += botellas;
+      }
+
+      // Margen por añada — lado ingresos
+      if (anada) {
+        if (!anadaVentas[anada]) anadaVentas[anada] = { anada: anada, ars: 0, usd: 0, botellas: 0 };
+        anadaVentas[anada].ars += montoArs; anadaVentas[anada].usd += montoUsd; anadaVentas[anada].botellas += botellas;
+      }
+    }
+
+    if (concepto === 'Egreso') {
+      // Margen por añada — lado costos
+      if (anada) {
+        if (!anadaCostos[anada]) anadaCostos[anada] = { anada: anada, ars: 0, usd: 0 };
+        anadaCostos[anada].ars += -montoArs; anadaCostos[anada].usd += -montoUsd;
+      }
+      // Costo unitario acumulado por producto (suma de CU US$ de cada costo)
+      if (producto) {
+        if (!costoProducto[producto]) costoProducto[producto] = { producto: producto, cuUsd: 0, totalUsd: 0 };
+        costoProducto[producto].cuUsd += Math.abs(cuUsd);
+        costoProducto[producto].totalUsd += -montoUsd;
+      }
+      // Evolución de insumos: costo unitario por tipo de insumo y añada
+      if (anada && detalle && Math.abs(cuUsd) > 0) {
+        var clave = detalle + '||' + anada;
+        if (!insumosAnada[clave]) insumosAnada[clave] = { insumo: detalle, anada: anada, cuUsd: 0 };
+        insumosAnada[clave].cuUsd += Math.abs(cuUsd);
+      }
+    }
+  }
+
+  function aLista(obj, orden) {
+    var out = [];
+    for (var k in obj) out.push(obj[k]);
+    if (orden) out.sort(orden);
+    return out;
+  }
+
+  // Margen por añada: cruzar ventas y costos
+  var anadas = {};
+  for (var a in anadaVentas) anadas[a] = true;
+  for (var b in anadaCostos) anadas[b] = true;
+  var margenAnada = [];
+  for (var k2 in anadas) {
+    var v = anadaVentas[k2] || { ars: 0, usd: 0, botellas: 0 };
+    var c = anadaCostos[k2] || { ars: 0, usd: 0 };
+    margenAnada.push({
+      anada: k2,
+      ventasArs: Math.round(v.ars), ventasUsd: Math.round(v.usd), botellasVendidas: v.botellas,
+      costosArs: Math.round(c.ars), costosUsd: Math.round(c.usd),
+      margenArs: Math.round(v.ars - c.ars), margenUsd: Math.round(v.usd - c.usd)
+    });
+  }
+  margenAnada.sort(function(x, y) { return x.anada < y.anada ? -1 : 1; });
+
+  return {
+    ventasMes:     aLista(ventasMes, function(x, y) { return x.periodo < y.periodo ? -1 : 1; }),
+    ventasCliente: aLista(ventasCliente, function(x, y) { return y.ars - x.ars; }),
+    ventasProducto: aLista(ventasProducto, function(x, y) { return y.ars - x.ars; }),
+    flujoAnual:    aLista(flujoAnio, function(x, y) { return x.anio - y.anio; }),
+    margenAnada:   margenAnada,
+    costoProducto: aLista(costoProducto, function(x, y) { return y.cuUsd - x.cuUsd; }),
+    insumosAnada:  aLista(insumosAnada, function(x, y) { return x.anada < y.anada ? -1 : (x.anada > y.anada ? 1 : (y.cuUsd - x.cuUsd)); })
+  };
 }
 
 // ── COSTEO DE REPOSICIÓN (hoja INSUMOS) ──────────────────────────────
