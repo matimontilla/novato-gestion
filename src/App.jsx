@@ -627,8 +627,8 @@ function DashboardScreen({onNavigate,price,source,productos,last,operacionesPend
       </div>
 
       {detalle&&(
-        <div onClick={()=>setDetalle(null)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',zIndex:100,display:'flex',alignItems:'flex-end',justifyContent:'center'}}>
-          <div onClick={e=>e.stopPropagation()} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:'16px 16px 0 0',padding:'18px 16px 28px',width:'100%',maxWidth:500,maxHeight:'85vh',overflowY:'auto'}}>
+        <div onClick={()=>setDetalle(null)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',zIndex:250,display:'flex',alignItems:'flex-end',justifyContent:'center'}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:'16px 16px 0 0',padding:'18px 16px calc(28px + env(safe-area-inset-bottom, 0px))',width:'100%',maxWidth:500,maxHeight:'88vh',overflowY:'auto',WebkitOverflowScrolling:'touch'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
               <div style={{color:C.gold,fontSize:15,fontFamily:'Georgia, serif',fontWeight:700}}>Detalle de operación</div>
               <button onClick={()=>setDetalle(null)} style={{background:'none',border:'none',color:C.muted,fontSize:22,cursor:'pointer',lineHeight:1,padding:'0 4px'}}>×</button>
@@ -965,26 +965,31 @@ function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,comprasPendien
 // ── GRÁFICOS (SVG a mano, sin dependencias) ─────────────────────────────
 // Barras verticales. datos: [{label, valor}]. fmt: función para formatear el valor.
 function BarChart({datos,fmt,color=C.gold,alto=150}){
-  if(!datos||datos.length===0) return <div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',padding:'16px 0',textAlign:'center'}}>Sin datos</div>;
-  const max=Math.max(...datos.map(d=>Math.abs(d.valor)),1);
-  const ancho=Math.max(datos.length*38,280);
-  const anchoBarra=Math.min(28,(ancho/datos.length)*0.65);
+  const limpios=(datos||[]).map(d=>({...d,valor:Number(d.valor)||0}));
+  if(limpios.length===0) return <div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',padding:'16px 0',textAlign:'center'}}>Sin datos</div>;
+  const max=Math.max(...limpios.map(d=>Math.abs(d.valor)),1);
+  const topPad=16;   // aire arriba para que la etiqueta del valor no se corte
+  const botPad=30;   // aire abajo para las etiquetas del eje
+  const ancho=Math.max(limpios.length*38,280);
+  const paso=ancho/limpios.length;
+  const anchoBarra=Math.max(6,Math.min(28,paso*0.6));
   return(
     <div style={{overflowX:'auto',paddingBottom:4}}>
-      <svg width={ancho} height={alto+38} style={{display:'block'}}>
-        {datos.map((d,i)=>{
-          const x=(i+0.5)*(ancho/datos.length);
+      <svg width={ancho} height={topPad+alto+botPad} style={{display:'block'}}>
+        {limpios.map((d,i)=>{
+          const x=(i+0.5)*paso;
           const h=Math.abs(d.valor)/max*alto;
+          const yBarra=topPad+alto-h;
           return(
             <g key={i}>
-              <rect x={x-anchoBarra/2} y={alto-h} width={anchoBarra} height={Math.max(h,1)} rx={3} fill={d.valor<0?'#f08080':color} opacity={0.85}/>
-              <text x={x} y={alto-h-4} textAnchor="middle" fontSize="8" fill={C.muted} fontFamily="system-ui">{fmt?fmt(d.valor):Math.round(d.valor)}</text>
-              <text x={x} y={alto+14} textAnchor="middle" fontSize="9" fill={C.dim} fontFamily="system-ui">{d.label}</text>
-              {d.sub&&<text x={x} y={alto+26} textAnchor="middle" fontSize="8" fill={C.dim} fontFamily="system-ui" opacity={0.7}>{d.sub}</text>}
+              <rect x={x-anchoBarra/2} y={yBarra} width={anchoBarra} height={Math.max(h,1)} rx={3} fill={d.valor<0?'#f08080':color} opacity={0.85}/>
+              <text x={x} y={yBarra-4} textAnchor="middle" fontSize="8" fill={C.muted} fontFamily="system-ui">{fmt?fmt(d.valor):Math.round(d.valor)}</text>
+              <text x={x} y={topPad+alto+14} textAnchor="middle" fontSize="9" fill={C.dim} fontFamily="system-ui">{d.label}</text>
+              {d.sub&&<text x={x} y={topPad+alto+25} textAnchor="middle" fontSize="8" fill={C.dim} fontFamily="system-ui" opacity={0.7}>{d.sub}</text>}
             </g>
           );
         })}
-        <line x1="0" y1={alto} x2={ancho} y2={alto} stroke={C.border} strokeWidth="1"/>
+        <line x1="0" y1={topPad+alto} x2={ancho} y2={topPad+alto} stroke={C.border} strokeWidth="1"/>
       </svg>
     </div>
   );
@@ -992,11 +997,12 @@ function BarChart({datos,fmt,color=C.gold,alto=150}){
 
 // Barras horizontales, mejor para rankings con nombres largos (clientes, productos).
 function BarChartH({datos,fmt,color=C.gold}){
-  if(!datos||datos.length===0) return <div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',padding:'16px 0',textAlign:'center'}}>Sin datos</div>;
-  const max=Math.max(...datos.map(d=>Math.abs(d.valor)),1);
+  const limpios=(datos||[]).map(d=>({...d,valor:Number(d.valor)||0}));
+  if(limpios.length===0) return <div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',padding:'16px 0',textAlign:'center'}}>Sin datos</div>;
+  const max=Math.max(...limpios.map(d=>Math.abs(d.valor)),1);
   return(
     <div>
-      {datos.map((d,i)=>(
+      {limpios.map((d,i)=>(
         <div key={i} style={{marginBottom:9}}>
           <div style={{display:'flex',justifyContent:'space-between',gap:8,marginBottom:3}}>
             <span style={{color:C.text,fontSize:11,fontFamily:'system-ui',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.label}</span>
@@ -1013,10 +1019,13 @@ function BarChartH({datos,fmt,color=C.gold}){
 
 // Barras agrupadas de a dos (ej. ingresos vs egresos por año).
 function BarChartDoble({datos,fmt,colorA=C.gold,colorB='#f08080',labelA,labelB,alto=150}){
-  if(!datos||datos.length===0) return <div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',padding:'16px 0',textAlign:'center'}}>Sin datos</div>;
-  const max=Math.max(...datos.flatMap(d=>[Math.abs(d.a),Math.abs(d.b)]),1);
-  const ancho=Math.max(datos.length*62,280);
-  const bw=Math.min(20,(ancho/datos.length)*0.32);
+  const limpios=(datos||[]).map(d=>({...d,a:Number(d.a)||0,b:Number(d.b)||0}));
+  if(limpios.length===0) return <div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',padding:'16px 0',textAlign:'center'}}>Sin datos</div>;
+  const max=Math.max(...limpios.flatMap(d=>[Math.abs(d.a),Math.abs(d.b)]),1);
+  const topPad=10, botPad=22;
+  const ancho=Math.max(limpios.length*62,280);
+  const paso=ancho/limpios.length;
+  const bw=Math.max(6,Math.min(20,paso*0.3));
   return(
     <div>
       <div style={{display:'flex',gap:14,marginBottom:8,fontFamily:'system-ui',fontSize:10}}>
@@ -1024,19 +1033,19 @@ function BarChartDoble({datos,fmt,colorA=C.gold,colorB='#f08080',labelA,labelB,a
         <span style={{color:C.muted}}><span style={{display:'inline-block',width:8,height:8,background:colorB,borderRadius:2,marginRight:4}}/>{labelB}</span>
       </div>
       <div style={{overflowX:'auto',paddingBottom:4}}>
-        <svg width={ancho} height={alto+26} style={{display:'block'}}>
-          {datos.map((d,i)=>{
-            const cx=(i+0.5)*(ancho/datos.length);
+        <svg width={ancho} height={topPad+alto+botPad} style={{display:'block'}}>
+          {limpios.map((d,i)=>{
+            const cx=(i+0.5)*paso;
             const ha=Math.abs(d.a)/max*alto, hb=Math.abs(d.b)/max*alto;
             return(
               <g key={i}>
-                <rect x={cx-bw-2} y={alto-ha} width={bw} height={Math.max(ha,1)} rx={3} fill={colorA} opacity={0.85}/>
-                <rect x={cx+2} y={alto-hb} width={bw} height={Math.max(hb,1)} rx={3} fill={colorB} opacity={0.85}/>
-                <text x={cx} y={alto+15} textAnchor="middle" fontSize="9" fill={C.dim} fontFamily="system-ui">{d.label}</text>
+                <rect x={cx-bw-2} y={topPad+alto-ha} width={bw} height={Math.max(ha,1)} rx={3} fill={colorA} opacity={0.85}/>
+                <rect x={cx+2} y={topPad+alto-hb} width={bw} height={Math.max(hb,1)} rx={3} fill={colorB} opacity={0.85}/>
+                <text x={cx} y={topPad+alto+15} textAnchor="middle" fontSize="9" fill={C.dim} fontFamily="system-ui">{d.label}</text>
               </g>
             );
           })}
-          <line x1="0" y1={alto} x2={ancho} y2={alto} stroke={C.border} strokeWidth="1"/>
+          <line x1="0" y1={topPad+alto} x2={ancho} y2={topPad+alto} stroke={C.border} strokeWidth="1"/>
         </svg>
       </div>
     </div>
