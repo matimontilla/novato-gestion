@@ -251,6 +251,18 @@ la descarga mostraba rangos cerrados que en vivo ya estaban abiertos.
 **La fuente de verdad es Apps Script** (`getFormulas()` / `getValues()`), no la
 descarga. Para auditar el estado real: `diagnosticarErrores()`.
 
+### Archivos del backend
+
+- `novatobackend.gs`: lo que usa la app (endpoints, helpers, disparador de BLUE_API).
+- `herramientas.gs`: diagnósticos, reparaciones reutilizables y configuración, para
+  correr a mano con ▶ Run. El desplegable del editor muestra sólo las funciones del
+  archivo abierto.
+
+Las funciones de una sola vez que ya se corrieron (reclasificación de costos, columnas
+DEPOSITO y DIAS CIERRE, migración de zona horaria, etc.) **se borraron en octubre 2026**.
+Este documento las sigue nombrando como antecedente; el código está en el historial de
+GitHub (anterior al commit que crea `herramientas.gs`).
+
 ### Deploy: automático desde GitHub (desde octubre 2026)
 
 Cada push a `main` que toca `apps-script/` dispara la GitHub Action
