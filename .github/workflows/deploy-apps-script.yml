@@ -1,0 +1,79 @@
+# Sube apps-script/ a Google Apps Script y actualiza el deployment existente
+# (misma URL, la app no se entera) cada vez que cambia algo en apps-script/.
+#
+# Secretos necesarios en GitHub (Settings → Secrets and variables → Actions):
+#   CLASPRC_JSON   contenido de ~/.clasprc.json después de `clasp login`
+#   SCRIPT_ID      ID del proyecto de Apps Script (Configuración del proyecto → IDs)
+#   DEPLOYMENT_ID  ID del deployment web (el tramo AKfy... de la URL /macros/s/<ID>/exec)
+#
+# IMPORTANTE: `clasp push` REEMPLAZA todo el contenido del proyecto online con lo que
+# hay en apps-script/. Por eso el repo tiene que tener TODOS los archivos del proyecto,
+# incluido appsscript.json (el manifiesto, con zona horaria y config del web app).
+
+name: Deploy Apps Script
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps-script/**']
+  workflow_dispatch: {}   # también se puede correr a mano desde la pestaña Actions
+
+concurrency:
+  group: deploy-apps-script
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verificar configuración
+        id: check
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+          DEPLOYMENT_ID: ${{ secrets.DEPLOYMENT_ID }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ] || [ -z "$SCRIPT_ID" ] || [ -z "$DEPLOYMENT_ID" ]; then
+            echo "::notice::Faltan secretos (CLASPRC_JSON / SCRIPT_ID / DEPLOYMENT_ID). No se despliega nada."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ ! -f apps-script/appsscript.json ]; then
+            echo "::error::Falta apps-script/appsscript.json. Sin el manifiesto, clasp push pisaría el del proyecto online. No se despliega."
+            exit 1
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.ready == 'true'
+        with:
+          node-version: '22'
+
+      - name: Instalar clasp
+        if: steps.check.outputs.ready == 'true'
+        run: npm install -g @google/clasp@3
+
+      - name: Configurar credenciales y proyecto
+        if: steps.check.outputs.ready == 'true'
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+        run: |
+          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
+          printf '{"scriptId":"%s","rootDir":"apps-script"}' "$SCRIPT_ID" > .clasp.json
+
+      - name: Subir código
+        if: steps.check.outputs.ready == 'true'
+        run: clasp push --force
+
+      - name: Actualizar deployment (misma URL)
+        if: steps.check.outputs.ready == 'true'
+        env:
+          DEPLOYMENT_ID: ${{ secrets.DEPLOYMENT_ID }}
+        run: clasp update-deployment "$DEPLOYMENT_ID"
+
+      - name: Limpiar credenciales
+        if: always()
+        run: rm -f ~/.clasprc.json .clasp.json
