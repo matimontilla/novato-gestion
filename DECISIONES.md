@@ -240,14 +240,30 @@ la descarga mostraba rangos cerrados que en vivo ya estaban abiertos.
 **La fuente de verdad es Apps Script** (`getFormulas()` / `getValues()`), no la
 descarga. Para auditar el estado real: `diagnosticarErrores()`.
 
-### Deploy: cuándo hace falta
+### Deploy: automático desde GitHub (desde octubre 2026)
 
-- **Funciones que corrés a mano con ▶ Run** → alcanza con **guardar** (Ctrl+S)
-- **Cambios que usa la app** (endpoints nuevos, `addTransaccion`, etc.) → **Deploy →
-  Manage deployments → New version**
+Cada push a `main` que toca `apps-script/` dispara la GitHub Action
+`.github/workflows/deploy-apps-script.yml`, que sube el código con `clasp push` y
+actualiza el **mismo** deployment con `clasp update-deployment` (la URL no cambia).
+El frontend lo despliega Vercel. **Ya no hace falta pegar código ni hacer
+"New version" a mano.** También se puede correr a mano desde la pestaña Actions.
 
-Si una función corre pero se comporta como la versión vieja, lo más probable es que el
-código no se guardó bien. Un `Logger.log` con la versión al inicio despeja la duda.
+Secretos en GitHub: `CLASPRC_JSON` (credenciales de `clasp login`), `SCRIPT_ID`,
+`DEPLOYMENT_ID`. Si faltan, la Action no hace nada.
+
+**Cuidados:**
+- `clasp push` **reemplaza todo** el proyecto online con `apps-script/`. El repo tiene
+  que tener exactamente los mismos archivos: `novatobackend.gs` (el nombre importa: con
+  otro nombre borraría el archivo online) y `appsscript.json`.
+- **No editar el código directo en el editor de Apps Script:** el próximo deploy pisa
+  esos cambios. Todo cambio va por el repo.
+- Lo que **sigue siendo manual**: las funciones de una sola vez (reparaciones,
+  `prepararColumna...`) se corren con ▶ Run en el editor.
+
+**Pendiente:** el manifiesto tiene zona horaria `Australia/Darwin` (UTC+9:30), que
+probablemente explica las horas raras (07:30, 19:30) que aparecían en fechas. Pasarla
+a `America/Argentina/Mendoza` es un cambio aparte a hacer con cuidado, porque altera
+cómo el script construye fechas.
 
 ---
 
