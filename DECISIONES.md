@@ -113,14 +113,25 @@ Reparación: `normalizarRangosAbiertos()`.
 Insertar miles de filas con `insertRowAfter()` en un loop cuelga la ejecución y supera
 el límite de 6 minutos. Para volumen: `insertRowsAfter(fila, n)` + un solo `setValues()`.
 
-### Fechas: siempre a mediodía
+### Zona horaria: todo en America/Argentina/Mendoza
 
-```javascript
-// MAL — medianoche + zona horaria = la fecha se corre o queda con hora rara (07:30, 19:30)
-new Date(anio, mes, dia)
-// BIEN
-new Date(anio, mes, dia, 12, 0, 0)
-```
+El script (manifiesto `appsscript.json`) y la planilla (Archivo → Configuración) están
+en **America/Argentina/Mendoza**. Desde dónde se edite no importa: la zona es del archivo.
+
+**Antecedente (octubre 2026):** el script estaba en Australia/Darwin y la planilla en
+America/Los_Angeles. Toda fecha cargada desde la app quedaba **un día antes**, y como
+BLUE_API también estaba corrida (con otra hora), esas operaciones se convertían con la
+cotización del día hábil anterior. Las horas raras (07:30, 19:30) eran el síntoma.
+Se corrigió con `migrarZonaHorariaMendoza()`, identificando las filas por su "huella"
+de hora UTC (14:30 o 02:30) sin tocar las cargadas a mano.
+
+**Reglas que quedan:**
+- BLUE_API a **medianoche** de Mendoza: la búsqueda "exacto o anterior" encuentra la
+  cotización del mismo día para una operación a cualquier hora.
+- En la app, la fecha de "hoy" se toma del reloj del dispositivo (`fechaLocalHoy()`),
+  nunca de `toISOString()`, que da la fecha en UTC.
+- Si alguna vez se vuelven a ver horas raras en las fechas, revisar primero que las dos
+  zonas sigan en Mendoza (`diagnosticarZonasHorarias()`).
 
 ### Fórmulas con locale es-AR
 
@@ -260,10 +271,7 @@ Secretos en GitHub: `CLASPRC_JSON` (credenciales de `clasp login`), `SCRIPT_ID`,
 - Lo que **sigue siendo manual**: las funciones de una sola vez (reparaciones,
   `prepararColumna...`) se corren con ▶ Run en el editor.
 
-**Pendiente:** el manifiesto tiene zona horaria `Australia/Darwin` (UTC+9:30), que
-probablemente explica las horas raras (07:30, 19:30) que aparecían en fechas. Pasarla
-a `America/Argentina/Mendoza` es un cambio aparte a hacer con cuidado, porque altera
-cómo el script construye fechas.
+**Zona horaria:** ver la sección dedicada; script y planilla en Mendoza.
 
 ---
 

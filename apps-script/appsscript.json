@@ -1,5 +1,5 @@
 {
-  "timeZone": "Australia/Darwin",
+  "timeZone": "America/Argentina/Mendoza",
   "dependencies": {},
   "exceptionLogging": "STACKDRIVER",
   "runtimeVersion": "V8",

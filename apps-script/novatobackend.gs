@@ -1519,9 +1519,12 @@ function actualizarBlueApi() {
   var filas = fechas.map(function(k) {
     var d = porFecha[k];
     var partes = k.split('-');
-    // Mediodía (no medianoche) para que cualquier desfasaje de zona horaria al
-    // serializar no empuje la fecha al día anterior ni le meta una hora rara.
-    var fecha = new Date(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2]), 12, 0, 0);
+    // MEDIANOCHE de Mendoza (script y planilla están en America/Argentina/Mendoza).
+    // Las fórmulas buscan la cotización con XLOOKUP "exacto o anterior": con la
+    // cotización a las 00:00, una operación del día D a cualquier hora encuentra la de D.
+    // (Antes se usaba mediodía como parche porque el script estaba en Darwin y la
+    // planilla en Los Ángeles; eso corría todas las fechas un día.)
+    var fecha = new Date(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2]), 0, 0, 0);
     return [fecha, d.value_buy, d.value_sell]; // B=compra (value_buy), C=venta (value_sell)
   });
 
@@ -2152,6 +2155,82 @@ function diagnosticarCuadroCajas() {
 // y BLUE_API: el instante real (UTC), lo que se ve en la celda, y la fecha en Mendoza.
 // Si la fecha visible no coincide con la cargada, o aparecen horas raras (07:30, 19:30),
 // es por el desfasaje entre zonas.
+// ── MIGRACIÓN DE ZONA HORARIA A MENDOZA ───────────────────────────────
+// Hasta octubre 2026 el script estaba en Australia/Darwin (UTC+9:30) y la planilla en
+// America/Los_Angeles. Las fechas que armaba el script quedaron con "huellas" de hora
+// UTC que identifican sin ambigüedad cuál era el día real:
+//   · 14:30 UTC → medianoche de Darwin del día SIGUIENTE (parseFechaApp: cargas
+//                 desde la app en BALANCE y CAJA). Día real = fecha UTC + 1.
+//   · 02:30 UTC → mediodía de Darwin del MISMO día (filas CO/Semilla y BLUE_API).
+//                 Día real = fecha UTC.
+// Las fechas cargadas a mano en la planilla (medianoche de Los Ángeles = 07:00 u 08:00
+// UTC) NO tienen esas huellas y no se tocan: con la planilla en Mendoza se siguen
+// viendo en el mismo día.
+// Las filas corregidas se dejan al MEDIODÍA de Mendoza (15:00 UTC) del día real.
+// Todo el cálculo es en UTC, así que no depende de la zona activa al correrla.
+function calcularCorreccionesFecha_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var cambios = [];
+  ['BALANCE', 'CAJA'].forEach(function(nombre) {
+    var sh = ss.getSheetByName(nombre);
+    if (!sh) return;
+    var ultima = obtenerUltimaFilaConFecha(sh, 2);
+    if (ultima < 3) return;
+    var vals = sh.getRange(3, 2, ultima - 2, 1).getValues(); // B FECHA
+    for (var i = 0; i < vals.length; i++) {
+      var v = vals[i][0];
+      if (!(v instanceof Date)) continue;
+      var hh = v.getUTCHours(), mm = v.getUTCMinutes(), ss_ = v.getUTCSeconds();
+      if (mm !== 30 || ss_ !== 0 || (hh !== 14 && hh !== 2)) continue; // sin huella → no tocar
+      var y = v.getUTCFullYear(), mo = v.getUTCMonth(), d = v.getUTCDate() + (hh === 14 ? 1 : 0);
+      var nueva = new Date(Date.UTC(y, mo, d, 15, 0, 0)); // mediodía Mendoza del día real
+      cambios.push({ hoja: nombre, fila: i + 3, antes: v, despues: nueva });
+    }
+  });
+  return cambios;
+}
+
+function fmtMza_(d) { return Utilities.formatDate(d, 'America/Argentina/Mendoza', 'dd/MM/yyyy'); }
+
+// PASO 1 — sólo lectura. Lista qué filas se van a corregir y cómo.
+function previsualizarMigracionZona() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  Logger.log('Zona script: ' + Session.getScriptTimeZone() + ' | zona planilla: ' + ss.getSpreadsheetTimeZone());
+  var cambios = calcularCorreccionesFecha_();
+  var porHoja = {};
+  cambios.forEach(function(c) { porHoja[c.hoja] = (porHoja[c.hoja] || 0) + 1; });
+  Logger.log('Filas a corregir: ' + cambios.length + ' ' + JSON.stringify(porHoja));
+  cambios.forEach(function(c) {
+    Logger.log('  ' + c.hoja + ' fila ' + c.fila + ': se ve hoy como ' + fmtMza_(c.antes) + ' → queda ' + fmtMza_(c.despues));
+  });
+  Logger.log('BLUE_API se reconstruye entera al migrar (no se lista).');
+}
+
+// PASO 2 — aplica la migración: (1) pasa la planilla a Mendoza, (2) corrige las fechas
+// con huella en BALANCE y CAJA, celda por celda, (3) reconstruye BLUE_API a medianoche
+// de Mendoza. Correrla UNA vez, después de previsualizar. Si se corre de nuevo no hace
+// daño: ya no quedan huellas para corregir.
+function migrarZonaHorariaMendoza() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (Session.getScriptTimeZone() !== 'America/Argentina/Mendoza') {
+    Logger.log('El script todavía no está en Mendoza (' + Session.getScriptTimeZone() + '). ' +
+               'Esperá a que termine el deploy automático y volvé a correrla. No toqué nada.');
+    return;
+  }
+  var cambios = calcularCorreccionesFecha_(); // calcular ANTES de cambiar nada
+  if (ss.getSpreadsheetTimeZone() !== 'America/Argentina/Mendoza') {
+    ss.setSpreadsheetTimeZone('America/Argentina/Mendoza');
+    Logger.log('Planilla pasada a America/Argentina/Mendoza.');
+  }
+  cambios.forEach(function(c) {
+    ss.getSheetByName(c.hoja).getRange(c.fila, 2).setValue(c.despues);
+  });
+  Logger.log(cambios.length + ' fecha(s) corregida(s) en BALANCE/CAJA.');
+  actualizarBlueApi(); // reconstruye BLUE_API a medianoche de Mendoza
+  SpreadsheetApp.flush();
+  Logger.log('Listo. Corré diagnosticarZonasHorarias() para confirmar.');
+}
+
 function diagnosticarZonasHorarias() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   Logger.log('Zona del SCRIPT:   ' + Session.getScriptTimeZone());
