@@ -360,6 +360,20 @@ function escribirFormulasBalance(row, incluirSaldo) {
     balance.getRange(row, 15, 1, 3).setValues([['', '', '']]);
   }
   balance.getRange(row, 18).setValue('=IF(BALANCE!$B' + row + '="";"";YEAR(BALANCE!$B' + row + '))'); // R AÑO
+  balance.getRange(row, 20).setFormula(formulaDiasCierre(row)); // T DIAS CIERRE
+}
+
+// Días que tardó en cerrarse una operación: desde su fecha (B) hasta el ÚLTIMO cobro o
+// pago registrado en CAJA bajo la misma referencia Y producto (mismo filtro que usan
+// los saldos, así en multi-producto cada línea mide lo suyo).
+//
+// Queda VACÍA mientras la operación siga abierta — el dato sólo tiene sentido una vez
+// saldada. Si el saldo (O) no es cero, no hay fecha de cierre todavía. Para las que
+// siguen abiertas, la app ya muestra hace cuántos días están.
+function formulaDiasCierre(row) {
+  return '=IF(OR(G' + row + '=0;O' + row + '="");"";' +
+           'IF(ROUND(O' + row + ';0)<>0;"";' +
+             'IFERROR(MAXIFS(CAJA!$B$3:$B;CAJA!$I$3:$I;L' + row + ';CAJA!$E$3:$E;E' + row + ')-B' + row + ';"")))';
 }
 
 // Registra la venta en BALANCE (con las mismas fórmulas que usa cualquier fila
@@ -1201,7 +1215,8 @@ function getDetalleOperacion(referencia) {
           fecha:    formatDate(r[1]),   // B
           detalle:  r[2] || '',         // C
           contacto: r[3] || '',         // D
-          user:     r[0] || ''          // A quién la cargó
+          user:     r[0] || '',         // A quién la cargó
+          fechaMs:  (r[1] instanceof Date) ? r[1].getTime() : null
         };
       }
     }
@@ -1225,7 +1240,8 @@ function getDetalleOperacion(referencia) {
           montoArs: Math.round(Number(c[5]) || 0), // F
           montoUsd: Math.round(Number(c[6]) || 0), // G
           caja:     c[7] || '',                // H
-          user:     c[0] || ''                 // A
+          user:     c[0] || '',                // A
+          fechaMs:  c[1].getTime()
         });
       }
     }
@@ -1234,8 +1250,21 @@ function getDetalleOperacion(referencia) {
   // Totales: lo facturado vs lo cobrado/pagado
   var totalArs = 0, totalUsd = 0, totalBotellas = 0;
   lineas.forEach(function(l) { totalArs += l.montoArs; totalUsd += l.montoUsd; totalBotellas += l.botellas; });
-  var pagadoArs = 0, pagadoUsd = 0;
-  pagos.forEach(function(p) { pagadoArs += p.montoArs; pagadoUsd += p.montoUsd; });
+  var pagadoArs = 0, pagadoUsd = 0, ultimoPagoMs = null;
+  pagos.forEach(function(p) {
+    pagadoArs += p.montoArs; pagadoUsd += p.montoUsd;
+    if (p.fechaMs && (!ultimoPagoMs || p.fechaMs > ultimoPagoMs)) ultimoPagoMs = p.fechaMs;
+  });
+
+  // Días: si está cerrada, cuánto tardó (fecha → último movimiento); si sigue abierta,
+  // cuántos días lleva desde que se cargó.
+  var saldoArs = Math.round(totalArs - pagadoArs);
+  var cerrada = saldoArs === 0 && pagos.length > 0;
+  var dias = null;
+  if (cabecera && cabecera.fechaMs) {
+    var hasta = cerrada ? ultimoPagoMs : new Date().getTime();
+    if (hasta) dias = Math.round((hasta - cabecera.fechaMs) / 86400000);
+  }
 
   return {
     referencia:   referencia,
@@ -1247,8 +1276,10 @@ function getDetalleOperacion(referencia) {
     totalBotellas: totalBotellas,
     pagadoArs:    Math.round(pagadoArs),
     pagadoUsd:    Math.round(pagadoUsd),
-    saldoArs:     Math.round(totalArs - pagadoArs),
-    saldoUsd:     Math.round(totalUsd - pagadoUsd)
+    saldoArs:     saldoArs,
+    saldoUsd:     Math.round(totalUsd - pagadoUsd),
+    cerrada:      cerrada,
+    dias:         dias
   };
 }
 
@@ -1971,6 +2002,57 @@ function agregarFiltrosEncabezados() {
 
   SpreadsheetApp.flush();
   Logger.log('Listo. Recordá: filtrar es seguro, ORDENAR desde el filtro reordena las filas para todos.');
+}
+
+// UTILIDAD — correr UNA VEZ. Prepara la columna T (DIAS CIERRE) en BALANCE y le
+// escribe la fórmula a TODO el registro histórico, así se puede ver cuántos días tardó
+// en cobrarse o pagarse cada operación ya cerrada.
+//
+// Va en T, después de S (DEPOSITO), por la misma razón que esa: insertar una columna
+// en el medio correría el resto y el código escribe fórmulas con letras fijas.
+//
+// Verifica que T esté libre antes de tocar nada. Sólo escribe en la columna T.
+function prepararColumnaDias() {
+  var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  if (!balance) { Logger.log('No hay BALANCE.'); return; }
+
+  var encabezado = balance.getRange(2, 20).getValue(); // T2
+  if (encabezado && String(encabezado).toUpperCase().indexOf('DIA') === -1) {
+    Logger.log('CUIDADO: T2 ya tiene "' + encabezado + '". No toqué nada — revisá qué hay en la columna T.');
+    return;
+  }
+
+  var lastRow = balance.getLastRow();
+  if (lastRow < 3) { Logger.log('BALANCE sin datos.'); return; }
+  var n = lastRow - 2;
+
+  // Si no hay encabezado todavía, chequear que la columna no tenga datos sueltos
+  if (!encabezado) {
+    var previos = balance.getRange(3, 20, n, 1).getValues();
+    var conDato = 0;
+    for (var j = 0; j < n; j++) if (previos[j][0] !== '' && previos[j][0] !== null) conDato++;
+    if (conDato > 0) {
+      Logger.log('CUIDADO: la columna T tiene ' + conDato + ' celda(s) con datos pero sin encabezado. No toqué nada.');
+      return;
+    }
+  }
+
+  balance.getRange(2, 20).setValue('DIAS CIERRE');
+
+  // Escribir la fórmula sólo en filas con REFERENCIA (las demás quedan vacías).
+  var refs = balance.getRange(3, 12, n, 1).getValues(); // L REFERENCIA
+  var salida = [];
+  var conFormula = 0;
+  for (var i = 0; i < n; i++) {
+    if (refs[i][0]) { salida.push([formulaDiasCierre(i + 3)]); conFormula++; }
+    else salida.push(['']);
+  }
+  balance.getRange(3, 20, n, 1).setFormulas(salida);
+  balance.getRange(3, 20, n, 1).setNumberFormat('0');
+
+  SpreadsheetApp.flush();
+  Logger.log('Listo — columna T (DIAS CIERRE) preparada con fórmula en ' + conFormula + ' fila(s) con referencia. ' +
+             'Las operaciones todavía abiertas quedan vacías hasta que se saldan.');
 }
 
 function prepararColumnaDeposito() {

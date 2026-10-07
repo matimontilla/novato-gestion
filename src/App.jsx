@@ -693,6 +693,12 @@ function DashboardScreen({onNavigate,price,source,productos,last,operacionesPend
                     <span style={{color:Math.abs(detalle.saldoArs)<1?'#7dce9b':'#f0c674'}}>${Math.abs(detalle.saldoArs).toLocaleString('es-AR')}</span>
                   </div>
                   {!!detalle.saldoUsd&&<div style={{color:C.dim,fontSize:10,textAlign:'right',marginTop:3}}>US${Math.abs(detalle.saldoUsd).toLocaleString('es-AR')}</div>}
+                  {detalle.dias!==null&&detalle.dias!==undefined&&(
+                    <div style={{display:'flex',justifyContent:'space-between',fontSize:12,padding:'7px 0 0',borderTop:`1px solid ${C.border}`,marginTop:6}}>
+                      <span style={{color:C.muted}}>{detalle.cerrada?(detalle.totalArs>=0?'Tardó en cobrarse':'Tardó en pagarse'):'Lleva abierta'}</span>
+                      <span style={{color:detalle.cerrada?'#7dce9b':(detalle.dias>60?'#f08080':C.text),fontWeight:700}}>{detalle.dias} día{detalle.dias===1?'':'s'}</span>
+                    </div>
+                  )}
                 </div>
               </>
             )}
