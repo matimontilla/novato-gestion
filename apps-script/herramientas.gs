@@ -5,12 +5,13 @@
 //  se borraron (quedan en el historial de GitHub).
 //
 //  Diagnóstico ............ diagnosticarErrores, diagnosticarZonasHorarias,
-//                           diagnosticarCuadroCajas, diagnosticarInsumos
+//                           diagnosticarCuadroCajas, diagnosticarInsumos,
+//                           analizarDiasCierre
 //  Reparación ............. repararTodasLasFormulas, normalizarRangosAbiertos,
 //                           blindarFormulasDolar, repararCuadroCajasArs,
 //                           repararFormatosInsumos
 //  Configuración .......... instalarTriggerBlueApi, obtenerChatIdsTelegram,
-//                           agregarFiltrosEncabezados
+//                           agregarFiltrosEncabezados, ordenarYFormatearColumnasExtra
 // ═══════════════════════════════════════════════════════════════════
 
 // ── UTILIDAD — correr UNA VEZ a mano para averiguar el chat_id de cada persona ──
@@ -473,5 +474,93 @@ function diagnosticarErrores() {
       }
     }
     Logger.log(nombre + ': ' + encontrados.length + ' error(es)' + (encontrados.length ? ' → ' + encontrados.slice(0, 15).join(', ') : ' ✓'));
+  });
+}
+
+// Reordena las columnas agregadas al final de BALANCE para que queden
+// Q (% DIF POR TC) → DIAS CIERRE → AÑO → DEPOSITO, y les copia el formato de la
+// columna Q (encabezado, bordes, fuente, ancho) con el formato numérico que
+// corresponde a cada una. Se puede correr más de una vez: si ya están en su lugar,
+// sólo vuelve a aplicar el formato. El código ubica estas columnas por encabezado,
+// así que moverlas no rompe nada.
+function ordenarYFormatearColumnasExtra() {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  var orden = ['DIAS CIERRE', 'AÑO', 'DEPOSITO'];
+  var faltan = orden.filter(function(n) { _colsBalance = null; return !colBalance_(n); });
+  if (faltan.length) { Logger.log('No encontré estos encabezados en la fila 2: ' + faltan.join(', ') + '. No toqué nada.'); return; }
+
+  orden.forEach(function(nombre, k) {
+    _colsBalance = null;
+    var actual = colBalance_(nombre), destino = 18 + k; // R, S, T
+    if (actual !== destino) {
+      // moveColumns: el índice de destino es la columna ANTES de la cual se inserta
+      sh.moveColumns(sh.getRange(1, actual, sh.getMaxRows(), 1), destino > actual ? destino + 1 : destino);
+      Logger.log(nombre + ': movida de la columna ' + actual + ' a la ' + destino);
+    }
+  });
+  _colsBalance = null;
+
+  var filas = sh.getMaxRows();
+  var molde = sh.getRange(1, 17, filas, 1); // columna Q
+  var formatos = { 'DIAS CIERRE': '0', 'AÑO': '0', 'DEPOSITO': '@' };
+  orden.forEach(function(nombre) {
+    var c = colBalance_(nombre);
+    molde.copyTo(sh.getRange(1, c, filas, 1), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+    sh.getRange(3, c, filas - 2, 1).setNumberFormat(formatos[nombre]);
+    sh.setColumnWidth(c, sh.getColumnWidth(17));
+  });
+  SpreadsheetApp.flush();
+  Logger.log('Listo — orden: Q % DIF POR TC | R DIAS CIERRE | S AÑO | T DEPOSITO, con el formato de la tabla.');
+}
+
+// Analiza los valores de DIAS CIERRE en BALANCE: distribución general y, para cada
+// valor raro (negativo, cero o más de 365 días), el contexto para entender por qué:
+// fechas de la operación y de sus cobros/pagos en CAJA, y si la fórmula de saldo de
+// esa fila es la vieja (sólo por referencia) o la nueva (referencia + producto).
+// No modifica nada.
+function analizarDiasCierre() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var bal = ss.getSheetByName('BALANCE'), caja = ss.getSheetByName('CAJA');
+  _colsBalance = null;
+  var cDias = colBalance_('DIAS CIERRE');
+  if (!cDias) { Logger.log('No hay columna DIAS CIERRE.'); return; }
+  var ultB = obtenerUltimaFilaConFecha(bal, 2), ultC = obtenerUltimaFilaConFecha(caja, 2);
+  var B = bal.getRange(3, 1, ultB - 2, Math.max(cDias, 15)).getValues();
+  var O = bal.getRange(3, 15, ultB - 2, 1).getFormulas();
+  var C = caja.getRange(3, 1, ultC - 2, 9).getValues(); // A..I
+
+  // Índice de CAJA por referencia
+  var porRef = {};
+  C.forEach(function(r) {
+    if (!r[8] || !(r[1] instanceof Date)) return;
+    (porRef[r[8]] = porRef[r[8]] || []).push({ fecha: r[1], prod: r[4] || '' });
+  });
+  var f = function(d) { return Utilities.formatDate(d, 'America/Argentina/Mendoza', 'dd/MM/yy'); };
+
+  var vals = [], raros = [];
+  for (var i = 0; i < B.length; i++) {
+    var d = B[i][cDias - 1];
+    if (typeof d !== 'number') continue;
+    vals.push(d);
+    if (d < 0 || d === 0 || d > 365) raros.push(i);
+  }
+  vals.sort(function(a, b) { return a - b; });
+  var med = vals.length ? vals[Math.floor(vals.length / 2)] : null;
+  Logger.log('Operaciones con DIAS CIERRE: ' + vals.length + ' | min ' + vals[0] + ' | mediana ' + med + ' | max ' + vals[vals.length - 1]);
+  Logger.log('Negativos: ' + vals.filter(function(v) { return v < 0; }).length +
+             ' | Cero: ' + vals.filter(function(v) { return v === 0; }).length +
+             ' | 1-60: ' + vals.filter(function(v) { return v > 0 && v <= 60; }).length +
+             ' | 61-365: ' + vals.filter(function(v) { return v > 60 && v <= 365; }).length +
+             ' | >365: ' + vals.filter(function(v) { return v > 365; }).length);
+  Logger.log('--- Valores raros (negativos, cero o >365) ---');
+  raros.forEach(function(i) {
+    var r = B[i], ref = r[11], prod = r[4] || '', movs = porRef[ref] || [];
+    var mismoProd = movs.filter(function(m) { return m.prod === prod; });
+    var fechas = movs.map(function(m) { return m.fecha; }).sort(function(a, b) { return a - b; });
+    Logger.log('fila ' + (i + 3) + ' | ' + r[2] + ' · ' + (r[3] || '') + ' · ' + (prod || '(sin producto)') +
+      ' | ref ' + ref + ' | fecha op ' + (r[1] instanceof Date ? f(r[1]) : r[1]) + ' | DIAS ' + r[cDias - 1] +
+      ' | saldo: ' + (String(O[i][0]).indexOf('SUMIFS') > -1 ? 'ref+producto' : 'solo ref') +
+      ' | CAJA: ' + movs.length + ' mov (' + mismoProd.length + ' con este producto)' +
+      (fechas.length ? ', del ' + f(fechas[0]) + ' al ' + f(fechas[fechas.length - 1]) : ''));
   });
 }

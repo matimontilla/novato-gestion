@@ -358,8 +358,27 @@ function escribirFormulasBalance(row, incluirSaldo) {
   } else {
     balance.getRange(row, 15, 1, 3).setValues([['', '', '']]);
   }
-  balance.getRange(row, 18).setValue('=IF(BALANCE!$B' + row + '="";"";YEAR(BALANCE!$B' + row + '))'); // R AÑO
-  balance.getRange(row, 20).setFormula(formulaDiasCierre(row)); // T DIAS CIERRE
+  var cAnio = colBalance_('AÑO'), cDias = colBalance_('DIAS CIERRE');
+  if (cAnio) balance.getRange(row, cAnio).setValue('=IF(BALANCE!$B' + row + '="";"";YEAR(BALANCE!$B' + row + '))'); // AÑO
+  if (cDias) balance.getRange(row, cDias).setFormula(formulaDiasCierre(row));                                       // DIAS CIERRE
+}
+
+// Número de columna de BALANCE según su encabezado (fila 2), o 0 si no existe.
+// Se usa para las columnas agregadas al final (AÑO, DEPOSITO, DIAS CIERRE): así se
+// pueden reordenar en la planilla sin romper el código. Las columnas A..Q siguen
+// usando letras fijas porque las fórmulas las referencian por letra.
+var _colsBalance = null;
+function colBalance_(nombre) {
+  if (!_colsBalance) {
+    var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+    var hdr = sh.getRange(2, 1, 1, sh.getLastColumn()).getValues()[0];
+    _colsBalance = {};
+    for (var i = 0; i < hdr.length; i++) {
+      var h = String(hdr[i] || '').trim().toUpperCase();
+      if (h && !_colsBalance[h]) _colsBalance[h] = i + 1;
+    }
+  }
+  return _colsBalance[String(nombre).toUpperCase()] || 0;
 }
 
 // Días que tardó en cerrarse una operación: desde su fecha (B) hasta el ÚLTIMO cobro o
@@ -471,7 +490,8 @@ function addTransaccion(p) {
     balance.getRange(row, 1).setValue(p.user || '');            // A: quién lo cargó
     // S DEPOSITO — de qué depósito salieron las botellas. Sólo tiene sentido si hubo
     // movimiento físico de stock; si no hay botellas, queda vacío.
-    if (botellas > 0) balance.getRange(row, 19).setValue(linea.deposito || 'R Peña');
+    var cDep = colBalance_('DEPOSITO');
+    if (botellas > 0 && cDep) balance.getRange(row, cDep).setValue(linea.deposito || 'R Peña');
 
     escribirFormulasBalance(row, true); // saldo por fila (SUMIFS filtra por producto, sin doble conteo aunque sea multi-producto)
 
@@ -1061,7 +1081,8 @@ function getDetalleOperacion(referencia) {
   if (balance) {
     var lastRowB = balance.getLastRow();
     if (lastRowB >= 3) {
-      var dataB = balance.getRange(3, 1, lastRowB - 2, 19).getValues(); // A..S
+      var cDepD = colBalance_('DEPOSITO');
+      var dataB = balance.getRange(3, 1, lastRowB - 2, Math.max(17, balance.getLastColumn())).getValues();
       for (var i = 0; i < dataB.length; i++) {
         var r = dataB[i];
         if (r[11] !== referencia) continue; // L REFERENCIA
@@ -1073,7 +1094,7 @@ function getDetalleOperacion(referencia) {
           montoArs:  Math.round(montoArs),
           montoUsd:  Math.round(Number(r[7]) || 0),                  // H MONTO US$
           precioUnit: botellas ? Math.round(montoArs / botellas) : null, // precio por botella
-          deposito:  r[18] || '',                                    // S DEPOSITO
+          deposito:  cDepD ? (r[cDepD - 1] || '') : '',                // DEPOSITO (por encabezado)
           fila:      i + 3
         });
         if (!cabecera) cabecera = {
