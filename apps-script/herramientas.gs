@@ -7,6 +7,7 @@
 //  Diagnóstico ............ diagnosticarErrores, diagnosticarZonasHorarias,
 //                           diagnosticarCuadroCajas, diagnosticarInsumos,
 //                           analizarDiasCierre
+//  Reescribir fórmulas ..... reescribirDiasCierre
 //  Reparación ............. repararTodasLasFormulas, normalizarRangosAbiertos,
 //                           blindarFormulasDolar, repararCuadroCajasArs,
 //                           repararFormatosInsumos
@@ -542,7 +543,7 @@ function analizarDiasCierre() {
     var d = B[i][cDias - 1];
     if (typeof d !== 'number') continue;
     vals.push(d);
-    if (d < 0 || d === 0 || d > 365) raros.push(i);
+    if (d < 0 || d > 365 || d % 1 !== 0) raros.push(i); // los ceros son normales (contado)
   }
   vals.sort(function(a, b) { return a - b; });
   var med = vals.length ? vals[Math.floor(vals.length / 2)] : null;
@@ -552,7 +553,7 @@ function analizarDiasCierre() {
              ' | 1-60: ' + vals.filter(function(v) { return v > 0 && v <= 60; }).length +
              ' | 61-365: ' + vals.filter(function(v) { return v > 60 && v <= 365; }).length +
              ' | >365: ' + vals.filter(function(v) { return v > 365; }).length);
-  Logger.log('--- Valores raros (negativos, cero o >365) ---');
+  Logger.log('--- Para revisar (negativos, >365 o con decimales) ---');
   raros.forEach(function(i) {
     var r = B[i], ref = r[11], prod = r[4] || '', movs = porRef[ref] || [];
     var mismoProd = movs.filter(function(m) { return m.prod === prod; });
@@ -563,4 +564,25 @@ function analizarDiasCierre() {
       ' | CAJA: ' + movs.length + ' mov (' + mismoProd.length + ' con este producto)' +
       (fechas.length ? ', del ' + f(fechas[0]) + ' al ' + f(fechas[fechas.length - 1]) : ''));
   });
+}
+
+// Reescribe la fórmula de DIAS CIERRE en todas las filas de BALANCE que tienen
+// REFERENCIA, con la versión vigente de formulaDiasCierre(). Usar cuando cambia la
+// fórmula. Escribe celda por celda y sólo en filas con referencia; no toca otras
+// columnas. Se puede correr las veces que haga falta.
+function reescribirDiasCierre() {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
+  _colsBalance = null;
+  var c = colBalance_('DIAS CIERRE');
+  if (!c) { Logger.log('No hay columna DIAS CIERRE.'); return; }
+  var ult = obtenerUltimaFilaConFecha(sh, 2);
+  var refs = sh.getRange(3, 12, ult - 2, 1).getValues(); // L REFERENCIA
+  var n = 0;
+  for (var i = 0; i < refs.length; i++) {
+    if (!refs[i][0]) continue;
+    sh.getRange(i + 3, c).setFormula(formulaDiasCierre(i + 3));
+    n++;
+  }
+  SpreadsheetApp.flush();
+  Logger.log('Listo — fórmula de DIAS CIERRE reescrita en ' + n + ' fila(s). Corré analizarDiasCierre() para revisar.');
 }

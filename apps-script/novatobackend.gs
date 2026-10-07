@@ -382,16 +382,27 @@ function colBalance_(nombre) {
 }
 
 // Días que tardó en cerrarse una operación: desde su fecha (B) hasta el ÚLTIMO cobro o
-// pago registrado en CAJA bajo la misma referencia Y producto (mismo filtro que usan
-// los saldos, así en multi-producto cada línea mide lo suyo).
+// pago registrado en CAJA bajo la misma referencia. Se compara sólo el DÍA (INT), sin
+// la hora, para no obtener medios días.
 //
-// Queda VACÍA mientras la operación siga abierta — el dato sólo tiene sentido una vez
-// saldada. Si el saldo (O) no es cero, no hay fecha de cierre todavía. Para las que
-// siguen abiertas, la app ya muestra hace cuántos días están.
+// Qué cobros cuentan:
+//  · Los de la misma referencia Y producto (en multi-producto cada línea mide lo suyo).
+//  · Si no hay ninguno con ese producto (cobro cargado con otro producto, o fila sin
+//    producto), los de la referencia sola. Antes devolvía 0 y daba -45.000.
+// Queda VACÍA si: no hay monto, la fila no lleva saldo, la operación sigue abierta,
+// no hay ningún movimiento en CAJA con esa referencia, o es CI/CO (agregados de muchos
+// pagos con una fecha promedio: los "días de cierre" no tienen sentido).
+// Un valor NEGATIVO es real: el pago se registró antes que la operación (anticipo/seña).
 function formulaDiasCierre(row) {
-  return '=IF(OR(G' + row + '=0;O' + row + '="");"";' +
-           'IF(ROUND(O' + row + ';0)<>0;"";' +
-             'IFERROR(MAXIFS(CAJA!$B$3:$B;CAJA!$I$3:$I;L' + row + ';CAJA!$E$3:$E;E' + row + ')-B' + row + ';"")))';
+  var r = String(row);
+  var ref = 'CAJA!$I$3:$I;L' + r, prod = 'CAJA!$E$3:$E;E' + r;
+  return '=IFERROR(IF(OR(G' + r + '=0;O' + r + '="";C' + r + '="CI";C' + r + '="CO");"";' +
+           'IF(ROUND(O' + r + ';0)<>0;"";' +
+           'IF(COUNTIF(' + ref + ')=0;"";' +
+           'INT(IF(AND(E' + r + '<>"";COUNTIFS(' + ref + ';' + prod + ')>0);' +
+                 'MAXIFS(CAJA!$B$3:$B;' + ref + ';' + prod + ');' +
+                 'MAXIFS(CAJA!$B$3:$B;' + ref + ')))' +   // cierra MAXIFS, IF, INT
+           '-INT(B' + r + '))));"")';                  // resta la fecha; cierra IF x3 e IFERROR
 }
 
 // Registra la venta en BALANCE (con las mismas fórmulas que usa cualquier fila
@@ -1149,7 +1160,10 @@ function getDetalleOperacion(referencia) {
   var dias = null;
   if (cabecera && cabecera.fechaMs) {
     var hasta = cerrada ? ultimoPagoMs : new Date().getTime();
-    if (hasta) dias = Math.round((hasta - cabecera.fechaMs) / 86400000);
+    // Diferencia en días calendario de Mendoza, sin la hora (evita medios días)
+    var dia = function(ms) { return Number(Utilities.formatDate(new Date(ms), 'America/Argentina/Mendoza', 'yyyyMMdd')); };
+    var aFecha = function(n) { return Date.UTC(Math.floor(n / 10000), Math.floor(n / 100) % 100 - 1, n % 100); };
+    if (hasta) dias = Math.round((aFecha(dia(hasta)) - aFecha(dia(cabecera.fechaMs))) / 86400000);
   }
 
   return {
