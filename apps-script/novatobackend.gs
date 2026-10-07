@@ -2147,6 +2147,34 @@ function diagnosticarCuadroCajas() {
   }
 }
 
+// UTILIDAD — diagnóstico de zonas horarias. No modifica nada. Muestra la zona del
+// script y la de la planilla, y cómo quedaron guardadas las últimas fechas de BALANCE
+// y BLUE_API: el instante real (UTC), lo que se ve en la celda, y la fecha en Mendoza.
+// Si la fecha visible no coincide con la cargada, o aparecen horas raras (07:30, 19:30),
+// es por el desfasaje entre zonas.
+function diagnosticarZonasHorarias() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  Logger.log('Zona del SCRIPT:   ' + Session.getScriptTimeZone());
+  Logger.log('Zona de la PLANILLA: ' + ss.getSpreadsheetTimeZone());
+
+  [['BALANCE', 3], ['BLUE_API', 2]].forEach(function(c) {
+    var sh = ss.getSheetByName(c[0]);
+    if (!sh) return;
+    var desde = c[0] === 'BALANCE' ? Math.max(c[1], obtenerUltimaFilaConFecha(sh, 2) - 4) : c[1];
+    var col = c[0] === 'BALANCE' ? 2 : 1;
+    var rango = sh.getRange(desde, col, 5, 1);
+    var vals = rango.getValues(), vis = rango.getDisplayValues();
+    Logger.log('--- ' + c[0] + ' ---');
+    for (var i = 0; i < vals.length; i++) {
+      var v = vals[i][0];
+      if (!(v instanceof Date)) continue;
+      Logger.log('  fila ' + (desde + i) + ' | UTC ' + v.toISOString() +
+                 ' | se ve: ' + vis[i][0] +
+                 ' | en Mendoza: ' + Utilities.formatDate(v, 'America/Argentina/Mendoza', 'dd/MM/yyyy HH:mm'));
+    }
+  });
+}
+
 function diagnosticarErrores() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var hojas = ['BALANCE', 'CAJA', 'STOCK', 'CLIENTES', 'BLUE_API', 'DINAMICOS'];

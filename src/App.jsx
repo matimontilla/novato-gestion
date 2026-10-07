@@ -110,6 +110,13 @@ const SEED_OPS = [
 ];
 
 // ── GAS HELPER ───────────────────────────────────────────────────────────
+// Fecha de hoy (yyyy-mm-dd) según el reloj del dispositivo. No usar toISOString(): da
+// la fecha en UTC, que en Australia por la mañana es "ayer" y en Mendoza de noche "mañana".
+function fechaLocalHoy(){
+  const d=new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+
 async function gasGet(params) {
   if (!GAS_URL) return null;
   const url = GAS_URL + '?' + new URLSearchParams(params).toString();
@@ -251,6 +258,17 @@ function LoginScreen({onLogin}){
   const [step,setStep]=useState('users');const [pending,setPending]=useState(null);const [pin,setPin]=useState('');const [shake,setShake]=useState(false);const [hov,setHov]=useState(null);
   const tryPin=async()=>{const s=await getPin(pending.id);if(pin===s){onLogin(pending);}else{setShake(true);setPin('');setTimeout(()=>setShake(false),500);}};
   useEffect(()=>{if(pin.length===4)tryPin();},[pin]);
+  // Teclado físico (compu): sin un input oculto, para que el teléfono no abra su propio
+  // teclado encima del teclado numérico de la app.
+  useEffect(()=>{
+    if(step!=='pin') return;
+    const onKey=e=>{
+      if(/^[0-9]$/.test(e.key)) setPin(p=>p.length<4?p+e.key:p);
+      else if(e.key==='Backspace') setPin(p=>p.slice(0,-1));
+    };
+    window.addEventListener('keydown',onKey);
+    return ()=>window.removeEventListener('keydown',onKey);
+  },[step]);
   if(step==='pin') return(
     <div style={{minHeight:'100vh',background:C.cellar,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:28}}>
       <button onClick={()=>{setStep('users');setPin('');}} style={{position:'absolute',top:20,left:20,background:'none',border:'none',color:C.muted,fontSize:22,cursor:'pointer'}}>←</button>
@@ -258,7 +276,6 @@ function LoginScreen({onLogin}){
       <div style={{display:'flex',gap:16,marginBottom:32,animation:shake?'shake 0.4s ease':'none'}}>
         {[0,1,2,3].map(i=><div key={i} style={{width:16,height:16,borderRadius:'50%',background:pin.length>i?C.gold:C.cork,border:`2px solid ${pin.length>i?C.gold:C.border}`,transition:'background 0.15s'}}/>)}
       </div>
-      <input autoFocus type="password" inputMode="numeric" pattern="[0-9]*" maxLength={4} value={pin} onChange={e=>{const v=e.target.value.replace(/\D/g,'');if(v.length<=4)setPin(v);}} style={{position:'absolute',opacity:0,width:1,height:1}}/>
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,72px)',gap:10}}>
         {['1','2','3','4','5','6','7','8','9','','0','⌫'].map((k,i)=>(
           <button key={i} onClick={()=>{if(k==='⌫')setPin(p=>p.slice(0,-1));else if(k)setPin(p=>p.length<4?p+k:p);}} style={{height:64,background:k?C.barrel:C.cellar,border:`1px solid ${k?C.border:'transparent'}`,borderRadius:12,color:C.text,fontSize:22,fontFamily:'Georgia, serif',cursor:k?'pointer':'default',opacity:k?1:0}}>{k}</button>
@@ -405,7 +422,7 @@ function StockControlBody({productos,showToast,onBack,last,save,user,refresh}){
 
 // ── TRANSFERENCIA ENTRE DEPÓSITOS ───────────────────────────────────────
 function TransferForm({productos,applyTransfer,user,showToast,onBack,refresh}){
-  const hoy=new Date().toISOString().split('T')[0];
+  const hoy=fechaLocalHoy();
   const [f,setF]=useState({producto:'',cantidad:'',desde:'',hacia:'',fecha:hoy,notas:''});
   const [sending,setSending]=useState(false);
   const set=(k,v)=>setF(p=>({...p,[k]:v}));
@@ -711,7 +728,7 @@ function DashboardScreen({onNavigate,price,source,productos,last,operacionesPend
 
 // ── NUEVA VENTA ──────────────────────────────────────────────────────────
 function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clientes,categorias,contactosBalance,refresh}){
-  const hoy=new Date().toISOString().split('T')[0];
+  const hoy=fechaLocalHoy();
   const lineaVacia={producto:'',deposito:'',botellas:'',monto:''};
   const [f,setF]=useState({detalle:'Venta',contacto:'',contactoNuevo:'',canal:'',fecha:hoy,lineas:[{...lineaVacia}]});
   const [sending,setSending]=useState(false);
@@ -833,7 +850,7 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
 
 // ── CAJA ─────────────────────────────────────────────────────────────────
 function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,comprasPendientes,refresh,resumenCajas,categorias,contactosBalance,clientes}){
-  const hoy=new Date().toISOString().split('T')[0];
+  const hoy=fechaLocalHoy();
   const [f,setF]=useState({tipo:'cobro',monto:'',caja:'Empresa (Ludico)',detalle:'',contacto:'',contactoNuevo:'',fecha:hoy,referencia:''});
   const [sending,setSending]=useState(false);
   // Cuadro de control: últimos movimientos de CAJA, cargados una vez y revelados de a 10.
