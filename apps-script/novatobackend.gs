@@ -14,7 +14,7 @@
 var TAB_TRANSF  = 'APP_TRANSFERENCIAS';
 var TAB_CONTROL = 'APP_CONTROL_STOCK'; // historial de controles físicos de stock (compartido entre dispositivos)
 
-var UBICACIONES = ['R Peña','Pipi','Lucas','Santi','Mati'];
+var UBICACIONES = ['R Peña','Pipi','Lucas','Santi','Mati','Otero Ramos']; // Otero Ramos elabora/etiqueta: stock en elaboración, no vendible
 
 // Traducción entre las etiquetas cortas que usa la app y los nombres reales
 // usados en las pestañas del Sheet.
@@ -26,7 +26,7 @@ var PRODUCTO_APP_TO_SHEET = {
   'Cab. Franc 2022':  'Cabernet Franc 2022',
   'Chardonnay 2022':  'Chardonnay 2022'
 };
-var UBIC_SHEET_MAP = { 'R Peña':'R PEÑA', 'Pipi':'PIPI', 'Lucas':'LUCAS', 'Santi':'REZMA', 'Mati':'MATI' };
+var UBIC_SHEET_MAP = { 'R Peña':'R PEÑA', 'Pipi':'PIPI', 'Lucas':'LUCAS', 'Santi':'REZMA', 'Mati':'MATI', 'Otero Ramos':'OTERO RAMOS' };
 var CAJA_LABELS = {
   'Empresa (Ludico)': 'LUDICO',
   'Mati':             'MATI',
@@ -503,6 +503,10 @@ function addTransaccion(p) {
       monto:    numero_(l.monto, 'El monto', 0, 1e10)
     };
   });
+  // Lo que está en Otero Ramos sigue en elaboración, sin etiquetar: primero se mueve a un depósito.
+  if (detalle === 'Venta' && lineas.some(function(l) { return l.deposito === 'Otero Ramos'; })) {
+    throw new Error('Lo que está en Otero Ramos todavía no se puede vender: pasalo antes a un depósito.');
+  }
   validarStockLineas_(lineas); // antes de escribir nada: si no alcanza el stock, no se carga nada
 
   var categorias = getCategoriasBalance();
@@ -1041,7 +1045,7 @@ function getUltimosControlesPorDeposito() {
 function getStockUbicacion() {
   var stock = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('STOCK');
   if (!stock) return {};
-  var data    = stock.getRange('B12:I18').getValues();
+  var data    = stock.getRange('B12:K18').getValues();
   var headers = data[0];
   var out = {};
   for (var i = 1; i < data.length; i++) {
@@ -1086,7 +1090,7 @@ function validarStockLineas_(lineas) {
 function ajustarStockUbicacion(productoApp, desde, hacia, cantidad) {
   var stock = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('STOCK');
   if (!stock) throw new Error('No se encontró la pestaña STOCK');
-  var data        = stock.getRange('B12:I18').getValues();
+  var data        = stock.getRange('B12:K18').getValues();
   var headers     = data[0];
   var nombreSheet = PRODUCTO_APP_TO_SHEET[productoApp] || productoApp;
 
@@ -1117,7 +1121,7 @@ function ajustarStockUbicacion(productoApp, desde, hacia, cantidad) {
 function fijarStockUbicacion(productoApp, deposito, valor) {
   var stock = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('STOCK');
   if (!stock) throw new Error('No se encontró la pestaña STOCK');
-  var data        = stock.getRange('B12:I18').getValues();
+  var data        = stock.getRange('B12:K18').getValues();
   var headers     = data[0];
   var nombreSheet = PRODUCTO_APP_TO_SHEET[productoApp] || productoApp;
 
