@@ -271,8 +271,9 @@ async function savePin(uid,pin){try{localStorage.setItem(`pin_${uid}`,pin);retur
 
 // ── UI BASE ──────────────────────────────────────────────────────────────
 const F=({label,children})=>(<div style={{display:'flex',flexDirection:'column',gap:6}}>{label&&<label style={{fontSize:13,color:C.muted,fontFamily:'system-ui'}}>{label}</label>}{children}</div>);
-const iS={background:C.cork,border:`1px solid ${C.border}`,borderRadius:12,padding:'12px 14px',minHeight:48,color:C.text,fontSize:16,fontFamily:'system-ui',outline:'none',width:'100%',boxSizing:'border-box'};
-const Inp=p=><input style={iS} {...p}/>;
+const iS={background:C.cork,border:`1px solid ${C.border}`,borderRadius:12,padding:'12px 14px',minHeight:48,minWidth:0,maxWidth:'100%',color:C.text,fontSize:16,fontFamily:'system-ui',outline:'none',width:'100%',boxSizing:'border-box'};
+// Los input de fecha de iPhone tienen un ancho propio que se desborda de su columna: se normalizan.
+const Inp=p=><input style={p.type==='date'?{...iS,WebkitAppearance:'none',appearance:'none',display:'block'}:iS} {...p}/>;
 const Sel=({children,...p})=><select style={{...iS,cursor:'pointer'}} {...p}>{children}</select>;
 const Btn=({children,variant='primary',style:s,...p})=>(<button style={{background:variant==='primary'?C.gold:variant==='danger'?C.wine:C.cork,color:variant==='primary'?'#1A1612':C.text,border:`1px solid ${variant==='primary'?C.gold:variant==='danger'?C.wine:C.border}`,borderRadius:12,padding:'12px 20px',minHeight:52,fontSize:16,fontFamily:'system-ui',fontWeight:700,cursor:'pointer',...s}} {...p}>{children}</button>);
 const Card=({children,style:s})=><div style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:16,padding:16,...s}}>{children}</div>;
@@ -843,7 +844,11 @@ function CargaRapida({onResultado}){
   const [avisos,setAvisos]=useState([]);
   const [escuchando,setEscuchando]=useState(false);
   const rec=useRef(null);
-  const SR=typeof window!=='undefined'&&(window.SpeechRecognition||window.webkitSpeechRecognition);
+  // En iPhone, la app agregada a la pantalla de inicio no entrega el dictado del navegador (el micrófono
+  // se enciende pero nunca llega el texto), así que ahí no se ofrece el botón propio: se usa el micrófono
+  // del teclado, que anda siempre.
+  const esIosInstalada=typeof navigator!=='undefined'&&(navigator.standalone===true||(/iPhone|iPad|iPod/.test(navigator.userAgent)&&window.matchMedia?.('(display-mode: standalone)').matches));
+  const SR=typeof window!=='undefined'&&!esIosInstalada&&(window.SpeechRecognition||window.webkitSpeechRecognition);
   useEffect(()=>()=>{ try{rec.current?.stop();}catch{} },[]);
   if(!GAS_URL) return null;
 
@@ -851,12 +856,15 @@ function CargaRapida({onResultado}){
     if(!SR) return;
     if(escuchando){ try{rec.current?.stop();}catch{} return; }
     try{
-      const r=new SR(); r.lang='es-AR'; r.interimResults=false; r.continuous=false;
-      r.onresult=e=>{ const t=Array.from(e.results).map(x=>x[0].transcript).join(' ').trim(); if(t) setTexto(p=>(p?p+' ':'')+t); };
+      const base=texto.trim();
+      const r=new SR(); r.lang='es-AR'; r.interimResults=true; r.continuous=false;
+      setError('');
+      // Se va mostrando lo que se entiende (parcial incluido), así un corte no pierde lo dictado.
+      r.onresult=e=>{ const t=Array.from(e.results).map(x=>x[0].transcript).join(' ').trim(); if(t) setTexto(((base?base+' ':'')+t).slice(0,500)); };
       r.onend=()=>setEscuchando(false);
-      r.onerror=()=>setEscuchando(false);
+      r.onerror=e=>{ setEscuchando(false); setError(e?.error==='not-allowed'||e?.error==='service-not-allowed'?'No hay permiso para usar el micrófono. Escribí la frase o usá el micrófono del teclado.':(e?.error==='no-speech'?'No escuché nada. Probá de nuevo.':'No pude dictar. Escribí la frase o usá el micrófono del teclado.')); };
       rec.current=r; setEscuchando(true); r.start();
-    }catch{ setEscuchando(false); }
+    }catch{ setEscuchando(false); setError('No pude dictar. Escribí la frase o usá el micrófono del teclado.'); }
   };
   const interpretar=async()=>{
     const t=texto.trim();
@@ -878,7 +886,7 @@ function CargaRapida({onResultado}){
         {SR&&<button onClick={dictar} aria-label={escuchando?'Dejar de escuchar':'Dictar'} style={{width:56,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',background:escuchando?C.wine:C.cork,border:`1px solid ${escuchando?C.wine:C.border}`,borderRadius:12,cursor:'pointer'}}><Ico n="mic" c={escuchando?'#fff':C.gold}/></button>}
       </div>
       <Btn onClick={interpretar} disabled={!texto.trim()||cargando} style={{opacity:(!texto.trim()||cargando)?0.5:1}}>{cargando?'Interpretando…':'Completar el formulario'}</Btn>
-      {!SR&&<span style={{fontSize:13,color:C.dim,fontFamily:'system-ui'}}>Para dictar, usá el micrófono del teclado de tu celular.</span>}
+      {!SR&&<span style={{fontSize:13,color:C.dim,fontFamily:'system-ui'}}>Para dictar, tocá el micrófono del teclado de tu celular.</span>}
       {error&&<div role="alert" style={{fontSize:14,color:'#f08080',fontFamily:'system-ui',lineHeight:1.4}}>{error}</div>}
       {avisos.length>0&&<div style={{fontSize:13,color:'#E6B566',fontFamily:'system-ui',lineHeight:1.5}}>{avisos.map((a,i)=><div key={i}>• {a}</div>)}</div>}
       {!error&&<span style={{fontSize:13,color:C.dim,fontFamily:'system-ui',lineHeight:1.4}}>Arma el formulario con lo que digas. Siempre lo revisás antes de registrar.</span>}
@@ -1064,9 +1072,9 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
         })}
         <button onClick={agregarLinea} style={{minHeight:52,background:'none',border:`1px dashed ${C.border}`,borderRadius:14,color:C.gold,fontSize:15,fontWeight:600,cursor:'pointer',fontFamily:'system-ui'}}>+ Agregar otro producto</button>
 
-        <div style={{display:'grid',gridTemplateColumns:esVenta?'1fr 1fr':'1fr',gap:12}}>
-          <div style={{display:'flex',flexDirection:'column',gap:6}}><Etiqueta htmlFor="fecha">Fecha</Etiqueta><Inp id="fecha" type="date" value={f.fecha} onChange={e=>set('fecha',e.target.value)}/></div>
-          {esVenta&&<div style={{display:'flex',flexDirection:'column',gap:6}}><Etiqueta htmlFor="canal">Canal</Etiqueta><Sel id="canal" value={f.canal} onChange={e=>set('canal',e.target.value)}><option value="">Seleccionar…</option>{CANALES.map(c=><option key={c} value={c}>{c}</option>)}</Sel></div>}
+        <div style={{display:'grid',gridTemplateColumns:esVenta?'minmax(0,1fr) minmax(0,1fr)':'minmax(0,1fr)',gap:12}}>
+          <div style={{display:'flex',flexDirection:'column',gap:6,minWidth:0}}><Etiqueta htmlFor="fecha">Fecha</Etiqueta><Inp id="fecha" type="date" value={f.fecha} onChange={e=>set('fecha',e.target.value)}/></div>
+          {esVenta&&<div style={{display:'flex',flexDirection:'column',gap:6,minWidth:0}}><Etiqueta htmlFor="canal">Canal</Etiqueta><Sel id="canal" value={f.canal} onChange={e=>set('canal',e.target.value)}><option value="">Seleccionar…</option>{CANALES.map(c=><option key={c} value={c}>{c}</option>)}</Sel></div>}
         </div>
 
         <section aria-label="Resumen" style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:16,padding:16,display:'flex',flexDirection:'column',gap:10,fontFamily:'system-ui'}}>
@@ -1602,7 +1610,7 @@ export default function NovatoApp(){
   if(!user)return <LoginScreen onLogin={(u,t)=>{authToken=t||'';ultimoRefresh.current=Date.now();setUser(u);setScreen('dashboard');}}/>;
   return(
     <div style={{fontFamily:'Georgia, serif',background:C.cellar,minHeight:'100vh',color:C.text}}>
-      {toast&&<div style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',zIndex:999,maxWidth:'calc(100vw - 32px)',textAlign:'center',background:toast.type==='ok'?C.greenBg:C.wineBg,border:`1px solid ${toast.type==='ok'?C.green:C.wine}`,color:toast.type==='ok'?'#7dce9b':'#f08080',padding:'12px 20px',borderRadius:12,fontSize:14,fontFamily:'system-ui',boxShadow:'0 4px 20px rgba(0,0,0,0.5)'}}>{toast.msg}</div>}
+      {toast&&<div style={{position:'fixed',top:'calc(env(safe-area-inset-top, 0px) + 68px)',left:'50%',transform:'translateX(-50%)',zIndex:999,maxWidth:'calc(100vw - 32px)',textAlign:'center',background:toast.type==='ok'?C.greenBg:C.wineBg,border:`1px solid ${toast.type==='ok'?C.green:C.wine}`,color:toast.type==='ok'?'#7dce9b':'#f08080',padding:'12px 20px',borderRadius:12,fontSize:14,fontFamily:'system-ui',boxShadow:'0 4px 20px rgba(0,0,0,0.5)'}}>{toast.msg}</div>}
       {settings&&<SettingsPanel user={user} onClose={()=>setSettings(false)} onLogout={logout} showToast={showToast}/>}
       <div style={{background:C.barrel,borderBottom:`1px solid ${C.border}`,padding:'calc(env(safe-area-inset-top, 0px) + 13px) 18px 13px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
         <div style={{display:'flex',alignItems:'center',gap:10}}><span style={{color:C.gold,fontWeight:700,letterSpacing:'0.25em',fontSize:15,fontFamily:'Georgia, serif'}}>NOVATO</span><span style={{color:C.border}}>|</span><span style={{color:C.muted,fontSize:13,fontFamily:'system-ui'}}>Gestión</span></div>
