@@ -324,6 +324,24 @@ test('IA: movimiento de caja y transferencia se normalizan; montos inválidos qu
   assert.equal(neg.movimiento.monto, '');
 });
 
+test('IA: las cajas se convierten a botellas en el código (1 caja = 6 botellas), también media caja y mezcla con sueltas', () => {
+  const b = conIa([
+    respTool({ tipo: 'venta', contacto: 'Organyca', lineas: [
+      { producto: 'Malbec 2022', cajas: 2, precio_por_caja: 50000 },
+      { producto: 'Blend 2023', cajas: 0.5, botellas: 2, precio_unitario: 9000 },
+    ] }),
+    respTool({ tipo: 'transferencia', transferencia: { producto: 'Malbec 2022', cajas: 3, desde: 'R Peña', hacia: 'Pipi' } }),
+    respTool({ tipo: 'transferencia', transferencia: { producto: 'Malbec 2022', cantidad: 4, cajas: 1, desde: 'R Peña', hacia: 'Pipi' } }),
+  ]);
+  const v = asistente(b, 'vendí 2 cajas de malbec 2022 a 50 mil y media caja y 2 botellas de blend').propuesta;
+  assert.equal(v.lineas[0].botellas, 12);
+  assert.equal(v.lineas[0].monto, 100000);   // 2 cajas x 50.000
+  assert.equal(v.lineas[1].botellas, 5);     // media caja (3) + 2 sueltas
+  assert.equal(v.lineas[1].monto, 45000);    // 5 botellas x 9.000
+  assert.equal(asistente(b, 'pasé 3 cajas de r peña a pipi').propuesta.transferencia.cantidad, 18);
+  assert.equal(asistente(b, 'pasé 1 caja y 4 botellas').propuesta.transferencia.cantidad, 10);
+});
+
 test('IA: una venta sin líneas pasa a no_entiendo', () => {
   const b = conIa([respTool({ tipo: 'venta', contacto: 'Organyca', lineas: [] })]);
   const p = asistente(b, 'vendí algo a organyca').propuesta;
