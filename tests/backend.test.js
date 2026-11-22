@@ -342,6 +342,25 @@ test('IA: las cajas se convierten a botellas en el código (1 caja = 6 botellas)
   assert.equal(asistente(b, 'pasé 1 caja y 4 botellas').propuesta.transferencia.cantidad, 10);
 });
 
+test('controles de stock: el último de cada depósito queda separado y el global es el más reciente', () => {
+  const b = cargarBackend();
+  b.run('formatDate = function(d){ return "F"+d; }; formatHora = function(h){ return "H"+h; };');
+  const d = n => `new Date(${n})`;
+  const r = b.run(`agruparControles_([
+    ["a","a","U","R Peña","Malbec 2022",100,98,-2,${d(1000)}],
+    ["a","a","U","R Peña","Blend 2023",50,50,0,${d(1000)}],
+    ["b","b","U","Pipi","Malbec 2022",10,10,0,${d(2000)}],
+    ["c","c","U","R Peña","Malbec 2022",95,96,1,${d(3000)}],
+    ["x","x","U","Pipi","Malbec 2022",1,1,0,"sin fecha"]
+  ])`);
+  assert.equal(r.ultimo.deposito, 'R Peña');
+  assert.equal(r.ultimo.items.length, 1);
+  assert.equal(r.ultimo.items[0].real, 96);
+  assert.equal(r.porDeposito['R Peña'].items[0].real, 96);   // el viejo de R Peña (1000) quedó atrás
+  assert.equal(r.porDeposito['Pipi'].items.length, 1);       // la fila sin timestamp se ignora
+  assert.deepEqual(Object.keys(r.porDeposito).sort(), ['Pipi', 'R Peña']);
+});
+
 test('IA: una venta sin líneas pasa a no_entiendo', () => {
   const b = conIa([respTool({ tipo: 'venta', contacto: 'Organyca', lineas: [] })]);
   const p = asistente(b, 'vendí algo a organyca').propuesta;

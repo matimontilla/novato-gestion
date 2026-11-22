@@ -209,6 +209,7 @@ function useAppData(user) {
   const [clientes, setClientes] = useState([]); // [{nombre,canal,activo}] — real, desde la pestaña CLIENTES
   const [categorias, setCategorias] = useState([]); // [{detalle,tipo,total}] — categorías reales de BALANCE (Venta, Retiros, Muestra, Tapones, etc.)
   const [contactosBalance, setContactosBalance] = useState([]); // clientes Y proveedores mezclados, desde SUBDETALLE
+  const [ultimosControles, setUltimosControles] = useState({}); // { depósito: último control de ese depósito }
   const [ultimoControlStock, setUltimoControlStock] = useState(undefined); // undefined=sin cargar aún; null=cargó y no hay control; objeto=hay control
   const [resumenCajas, setResumenCajas] = useState([]); // [{caja,ars,usd,crypto}] — real, desde el cuadro CAJAS al pie de CAJA
 
@@ -233,6 +234,7 @@ function useAppData(user) {
         if (d.categorias?.length) setCategorias(d.categorias);
         if (d.contactosBalance?.length) setContactosBalance(d.contactosBalance);
         setUltimoControlStock(d.ultimoControlStock ?? null);
+        setUltimosControles(d.ultimosControles || {});
         if (d.resumenCajas) setResumenCajas(d.resumenCajas);
       }
     } catch (e) { if (e?.delServidor) { /* sesión vencida u otro error del servidor: lo maneja revisarRespuesta */ } setSource('fallback'); }
@@ -247,7 +249,7 @@ function useAppData(user) {
     try { localStorage.setItem('ops', JSON.stringify(next)); } catch {}
   };
 
-  return { price, source, ops, addOp, refresh, stockUbicacion, ventasPendientes, comprasPendientes, operacionesPendientes, clientes, categorias, contactosBalance, ultimoControlStock, resumenCajas };
+  return { price, source, ops, addOp, refresh, stockUbicacion, ventasPendientes, comprasPendientes, operacionesPendientes, clientes, categorias, contactosBalance, ultimoControlStock, ultimosControles, resumenCajas };
 }
 
 function useStockControl(backendControl) {
@@ -434,7 +436,7 @@ function SettingsPanel({user,onClose,onLogout,showToast}){
 }
 
 // ── STOCK (control físico + transferencias entre depósitos) ────────────────
-function StockScreen({onBack,showToast,productos,applyTransfer,user,refresh,last,save,vistaInicial,borrador}){
+function StockScreen({onBack,showToast,productos,applyTransfer,user,refresh,last,save,vistaInicial,borrador,ultimosControles}){
   const [view,setView]=useState(vistaInicial||'control'); // 'control' | 'transfer'
   return(
     <div style={{padding:'20px 16px',maxWidth:500,margin:'0 auto'}}>
@@ -448,25 +450,26 @@ function StockScreen({onBack,showToast,productos,applyTransfer,user,refresh,last
         ))}
       </div>
       {view==='control'
-        ? <StockControlBody productos={productos} showToast={showToast} onBack={onBack} last={last} save={save} user={user} refresh={refresh}/>
+        ? <StockControlBody productos={productos} showToast={showToast} onBack={onBack} last={last} save={save} user={user} refresh={refresh} ultimosControles={ultimosControles}/>
         : <TransferForm productos={productos} applyTransfer={applyTransfer} user={user} showToast={showToast} onBack={onBack} refresh={refresh} borrador={borrador}/>}
     </div>
   );
 }
 
-function StockControlBody({productos,showToast,onBack,last,save,user,refresh}){
+function StockControlBody({productos,showToast,onBack,last,save,user,refresh,ultimosControles}){
   const productosOrdenados=[...productos].sort((a,b)=>totalStock(b)-totalStock(a)); // orden general por stock total
   const [deposito,setDeposito]=useState(UBICACIONES[0]);
+  const ctrlDeposito=(ultimosControles&&ultimosControles[deposito])||(last&&last.deposito===deposito?last:null);
   const productosDeposito=productosOrdenados.filter(p=>(p.stockUbic[deposito]||0)>0); // solo los que tienen stock EN ESTE depósito
-  const [real,setReal]=useState(Object.fromEntries(productosDeposito.map(p=>[p.id,'0'])));
-  useEffect(()=>{ setReal(Object.fromEntries(productosDeposito.map(p=>[p.id,'0']))); },[deposito]); // no arrastrar números de otro depósito
+  const [real,setReal]=useState({}); // arranca vacío: no se compara contra 0 hasta que se cargue el conteo
+  useEffect(()=>{ setReal({}); },[deposito]); // no arrastrar números de otro depósito
   const set=(id,v)=>setReal(p=>({...p,[id]:v.replace(/\D/g,'')}));
   const diffs=productosDeposito.map(p=>{
     const teorico=p.stockUbic[deposito]||0;
-    const r=real[p.id]===''?null:parseInt(real[p.id]);
+    const r=(real[p.id]===undefined||real[p.id]==='')?null:parseInt(real[p.id]);
     return{...p,stock:teorico,real:r,diff:r!==null?r-teorico:null};
   }).filter(p=>p.real!==null);
-  const hasDiff=diffs.some(d=>d.diff!==0);const allFilled=productosDeposito.length>0&&productosDeposito.every(p=>real[p.id]!=='');
+  const hasDiff=diffs.some(d=>d.diff!==0);const allFilled=productosDeposito.length>0&&productosDeposito.every(p=>real[p.id]!==undefined&&real[p.id]!=='');
   const [sending,setSending]=useState(false);
   const confirm=async()=>{
     const ctrl={deposito,fecha:new Date().toLocaleDateString('es-AR'),hora:new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}),items:diffs};
@@ -490,22 +493,36 @@ function StockControlBody({productos,showToast,onBack,last,save,user,refresh}){
           {UBICACIONES.map(u=><option key={u} value={u}>{u}</option>)}
         </Sel>
       </F>
-      {last&&<div style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:10,padding:'10px 14px',fontFamily:'system-ui',fontSize:12,color:C.muted,margin:'16px 0'}}>Último control: <strong style={{color:C.text}}>{last.deposito?`${last.deposito} · `:''}{last.fecha} a las {last.hora}</strong></div>}
+      {/* Último control de ESTE depósito: queda fijo mientras se carga el conteo nuevo */}
+      <div style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:14,padding:'12px 14px',fontFamily:'system-ui',margin:'16px 0'}}>
+        {ctrlDeposito?(<>
+          <div style={{fontSize:13,color:C.muted}}>Último control de {deposito}: <strong style={{color:C.text}}>{ctrlDeposito.fecha} a las {ctrlDeposito.hora}</strong></div>
+          <div style={{display:'flex',flexDirection:'column',gap:4,marginTop:8}}>
+            {ctrlDeposito.items.map((it,i)=>(
+              <div key={i} style={{display:'flex',justifyContent:'space-between',gap:8,fontSize:14,color:C.text}}>
+                <span>{it.label}</span>
+                <span><strong>{Number(it.real).toLocaleString('es-AR')}</strong> contadas{Number(it.diff)!==0&&<span style={{color:it.diff<0?'#f08080':'#7dce9b',marginLeft:6}}>({it.diff>0?'+':''}{it.diff})</span>}</span>
+              </div>
+            ))}
+          </div>
+        </>):<div style={{fontSize:14,color:C.muted}}>Todavía no hay un control cargado de {deposito}.</div>}
+      </div>
+      <div style={{fontSize:13,color:C.dim,fontFamily:'system-ui',lineHeight:1.4,marginBottom:12}}>El teórico es lo que debería haber hoy: el último control menos las ventas y movimientos. Cargá lo que contás y la diferencia sale sola.</div>
       {productosDeposito.length===0&&<div style={{color:C.dim,fontSize:13,fontFamily:'system-ui',textAlign:'center',padding:'20px 0'}}>No hay stock teórico registrado en {deposito}</div>}
-      {productosDeposito.length>0&&(<div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:20,marginTop:last?0:16}}>
+      {productosDeposito.length>0&&(<div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:20}}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 80px 80px 80px',gap:8,padding:'0 4px'}}>
           {['Producto','Teórico','Real','Dif.'].map(h=><div key={h} style={{fontSize:12,color:C.dim,letterSpacing:'0.1em',textTransform:'uppercase',fontFamily:'system-ui',textAlign:h!=='Producto'?'center':'left'}}>{h}</div>)}
         </div>
         {productosDeposito.map(p=>{
           const stock=p.stockUbic[deposito]||0;
-          const r=real[p.id]===''?null:parseInt(real[p.id]);
+          const r=(real[p.id]===undefined||real[p.id]==='')?null:parseInt(real[p.id]);
           const diff=r!==null?r-stock:null;
           const dc=diff===null?C.dim:diff<0?'#f08080':diff>0?'#7dce9b':C.muted;
           return(
             <div key={p.id} style={{background:C.barrel,border:`1px solid ${diff!==null&&diff!==0?dc+'44':C.border}`,borderRadius:12,padding:'12px 14px',display:'grid',gridTemplateColumns:'1fr 80px 80px 80px',gap:8,alignItems:'center'}}>
               <div><div style={{color:C.text,fontSize:14,fontFamily:'system-ui',fontWeight:600}}>{p.label}</div><div style={{width:40,height:3,background:p.hex,borderRadius:2,marginTop:4}}/></div>
               <div style={{textAlign:'center',color:C.muted,fontSize:15,fontFamily:'system-ui'}}>{stock}</div>
-              <input type="number" min="0" placeholder="—" value={real[p.id]} onChange={e=>set(p.id,e.target.value)} onFocus={e=>e.target.select()} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:8,padding:'8px',color:C.text,fontSize:15,fontFamily:'system-ui',outline:'none',width:'100%',boxSizing:'border-box',textAlign:'center'}}/>
+              <input type="number" min="0" placeholder="—" value={real[p.id]??''} onChange={e=>set(p.id,e.target.value)} onFocus={e=>e.target.select()} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:8,padding:'8px',color:C.text,fontSize:15,fontFamily:'system-ui',outline:'none',width:'100%',boxSizing:'border-box',textAlign:'center'}}/>
               <div style={{textAlign:'center',fontWeight:700,fontSize:15,fontFamily:'system-ui',color:dc}}>{diff===null?'—':diff===0?'✓':diff>0?`+${diff}`:diff}</div>
             </div>
           );
@@ -606,7 +623,7 @@ function DashboardScreen({user,onNavigate,price,source,productos,last,operacione
   const pctCobrar=Math.round(Math.abs(porCobrar)/baseBarra*100);
   const opsFiltradas=ops.filter(op=>filtro==='todas'||(filtro==='cobrar'&&op.esVenta)||(filtro==='pagar'&&!op.esVenta));
   const opsVisibles=verTodas?opsFiltradas:opsFiltradas.slice(0,4);
-  const vencidas=ops.filter(o=>o.vencida).sort((a,b)=>b.dias-a.dias).slice(0,2);
+  const vencidas=ops.filter(o=>o.vencida).sort((a,b)=>b.dias-a.dias); // todas las que llevan más de 60 días sin cobrar
   const controlAtrasado=daysSince===null||daysSince>30;
   const hayAlertas=controlAtrasado||vencidas.length>0||diffsControl.length>0;
   const hoy=(()=>{const t=new Date().toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long'});return t.charAt(0).toUpperCase()+t.slice(1);})();
@@ -659,7 +676,6 @@ function DashboardScreen({user,onNavigate,price,source,productos,last,operacione
       <section aria-label="Para resolver">
         <Titulo>Para resolver</Titulo>
         <div style={{display:'flex',flexDirection:'column',gap:10}}>
-          {controlAtrasado&&<Alerta tono="ambar" icono="alerta" titulo={daysSince===null?'Control de stock pendiente':`Control de stock hace ${daysSince} días`} sub={last?`Último: ${last.deposito?last.deposito+' · ':''}${last.fecha}`:'Nunca realizado'} accion="Controlar" onAccion={()=>onNavigate('stock')}/>}
           {vencidas.map(op=><Alerta key={op.referencia} tono="rojo" icono="reloj" titulo={`${op.contraparte||'(sin nombre)'} lleva ${op.dias} días sin pagar`} sub={`Saldo $${Math.abs(op.pendiente).toLocaleString('es-AR')}`} accion="Ver" onAccion={()=>abrirDetalle(op.referencia)}/>)}
           {diffsControl.length>0&&(
             <div style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:14,padding:'12px 14px',fontFamily:'system-ui'}}>
@@ -673,6 +689,7 @@ function DashboardScreen({user,onNavigate,price,source,productos,last,operacione
               ))}
             </div>
           )}
+          {controlAtrasado&&<Alerta tono="ambar" icono="alerta" titulo={daysSince===null?'Control de stock pendiente':`Control de stock hace ${daysSince} días`} sub={last?`Último: ${last.deposito?last.deposito+' · ':''}${last.fecha}`:'Nunca realizado'} accion="Controlar" onAccion={()=>onNavigate('stock')}/>}
           {!hayAlertas&&(<div style={{display:'flex',alignItems:'center',gap:10,background:C.greenBg,border:`1px solid ${C.green}55`,borderRadius:14,padding:'12px 14px',fontFamily:'system-ui',fontSize:14,color:'#7DCE9B'}}><Ico n="check" c="#7DCE9B"/>Todo en orden: control de stock al día y sin cobros vencidos.</div>)}
         </div>
       </section>
@@ -1581,7 +1598,7 @@ function Nav({screen,setScreen}){
 // ── APP ───────────────────────────────────────────────────────────────────
 export default function NovatoApp(){
   const [user,setUser]=useState(null);const [screen,setScreen]=useState('dashboard');const [borrador,setBorrador]=useState(null);const [vistaStock,setVistaStock]=useState(null);const [toast,setToast]=useState(null);const [settings,setSettings]=useState(false);
-  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,comprasPendientes,operacionesPendientes,clientes,categorias,contactosBalance,ultimoControlStock,resumenCajas,refresh}=useAppData(user);
+  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,comprasPendientes,operacionesPendientes,clientes,categorias,contactosBalance,ultimoControlStock,ultimosControles,resumenCajas,refresh}=useAppData(user);
   const {productos,applyTransfer,applySale}=useProductos(stockUbicacion);
   const {last,save}=useStockControl(ultimoControlStock);
   const showToast=(msg,type='ok')=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
@@ -1619,7 +1636,7 @@ export default function NovatoApp(){
         {screen==='dashboard'&&<DashboardScreen user={user} onNavigate={irA} price={price} source={source} productos={productos} last={last} operacionesPendientes={operacionesPendientes} resumenCajas={resumenCajas}/>}
         {screen==='venta'&&<VentaScreen user={user} onBack={()=>irA('dashboard')} showToast={showToast} addOp={addOp} price={price} productos={productos} applySale={applySale} clientes={clientes} categorias={categorias} contactosBalance={contactosBalance} refresh={refresh} onIrA={irConBorrador}/>}
         {screen==='caja'&&<CajaScreen user={user} onBack={()=>irA('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes} comprasPendientes={comprasPendientes} refresh={refresh} resumenCajas={resumenCajas} categorias={categorias} contactosBalance={contactosBalance} clientes={clientes} borrador={borrador}/>}
-        {screen==='stock'&&<StockScreen onBack={()=>irA('dashboard')} showToast={showToast} productos={productos} applyTransfer={applyTransfer} user={user} refresh={refresh} last={last} save={save} vistaInicial={vistaStock} borrador={borrador}/>}
+        {screen==='stock'&&<StockScreen onBack={()=>irA('dashboard')} showToast={showToast} productos={productos} applyTransfer={applyTransfer} user={user} refresh={refresh} last={last} save={save} vistaInicial={vistaStock} borrador={borrador} ultimosControles={ultimosControles}/>}
         {screen==='datos'&&<DatosScreen price={price} productos={productos}/>}
       </main>
       <Nav screen={screen} setScreen={irA}/>
