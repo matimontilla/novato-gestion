@@ -500,3 +500,18 @@ Opus 5, y negó la existencia de Opus 5 hasta que una búsqueda lo desmintió.
 - Productos con stock 0 se ocultan de los selectores
 - Signos: cobro positivo, gasto negativo. Verde `+` / rojo `-`. Sobrepago se muestra
   distinto (azul, "a favor") de deuda real.
+
+## Chardonnay / Yuniku / Organyca (corrección de registros, nov 2026)
+
+Contexto: proyecto de elaboración por encargo para el restaurante Yuniku (nunca abrió). Novato elaboró, etiquetó y cobró (YUN-001, $1.847.400, 10 cobros en CAJA). Después Yuniku ofreció su stock para venderlo por los canales de Novato, pagándole un precio por botella vendida. Más tarde se entregó el Chardonnay restante a Organyca (nuevo proyecto) y el saldo se canceló con Malbec 2022.
+
+- **Stock Chardonnay 2022 cierra en 0.** Las 2208 salidas son 1674 "Muestra"/entregas, 17 ajustes, 499 ventas a terceros y 18 retiros. YUN-001 va sin botellas (venta contable, ya había salido el vino en la entrega).
+- **Pago a Yuniku ($320.000, 19-9-23).** Tiene fila en BALANCE (DETALLE "Pago", referencia CCH22-011) y el mismo código en CAJA, así que el saldo da 0. Precio por botella pactado, reconstruido: $320.000 ÷ 209 botellas vendidas a terceros hasta esa fecha ≈ $1.531 (cálculo de nov 2026, no un dato registrado entonces).
+- **Categorías nuevas en BALANCE (DETALLE), todas sin monto:**
+  - "Entrega / traspaso": el vino sigue siendo de otro y vuelve a su dueño (24 Chardonnay a Yuniku el 17-4-23, 1598 a Organyca el 1-7-25).
+  - "Canje / pago en especie": 168 Malbec 2022 a Organyca el 1-7-25, que cancelaron el saldo restante. Se dejó sin valor en plata a propósito: valorarlo inflaría ingresos o abriría un saldo sin caja detrás. El orden de magnitud del saldo era unos $444.000 (290 botellas vendidas después del pago × ≈$1.531), unos $2.643 por botella de Malbec. Es una estimación.
+  - "Pago depósito": botellas que se lleva el dueño del depósito de R Peña (Pelado) como pago. Teóricamente una caja por mes; lo confirma Pipi de vez en cuando, por eso se registra en lote cuando se hace un ajuste.
+- El stock cuenta botellas por producto, no por DETALLE, así que renombrar categorías no cambia cantidades.
+- **Elaboración por encargo.** `CLIENTES_POR_ENCARGO` (novatobackend.gs) lista clientes cuya venta no es comercial. En `getAnalytics` no entran en ventas por mes, por cliente, por producto ni en la concentración; sí cuentan en el flujo y en el margen de su añada (ahí están sus costos). Se muestran aparte en "Elaboración por encargo".
+- **Blend 2023 sin etiquetar.** Las 3960 botellas están estibadas en Otero Ramos, sin etiqueta, no se venden todavía. En la app el producto lleva `sinEtiquetar: 'Otero Ramos'`: no aparece en ventas, transferencias ni conteos por depósito, y se muestra aparte en el Dashboard. Limitación: la tabla de depósitos de la hoja STOCK sigue poniendo esas botellas bajo R PEÑA (no hay columna Otero Ramos).
+- **Organyca (ORG-001 a 004, $960.000).** Son ventas ordinarias posteriores al saldo del Chardonnay. Organyca quebró. La dolarización del 3-8-26 (US$676,06) es un acuerdo informal, no está registrada en la planilla. Criterio al cobrar: no cambiar el precio de las ventas. Se registra el cobro real en CAJA vinculado a ORG-001..004 y la diferencia con $960.000 va como fila "Ajuste" en BALANCE sin producto, para no tocar precio por botella ni stock.

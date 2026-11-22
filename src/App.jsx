@@ -26,7 +26,7 @@ const vacio = () => Object.fromEntries(UBICACIONES.map(u=>[u,0]));
 const PRODUCTOS_SEED = [
   { id:'mb21', label:'Malbec 2021',     max:2964, hex:'#6B2030', stockUbic:{...vacio()} },
   { id:'mb22', label:'Malbec 2022',     max:3818, hex:'#9B2335', stockUbic:{...vacio(),'R Peña':2964,'Pipi':30,'Lucas':15} },
-  { id:'mb23', label:'Blend 2023',      max:3960, hex:'#C04050', stockUbic:{...vacio(),'R Peña':3960} },
+  { id:'mb23', label:'Blend 2023',      max:3960, hex:'#C04050', stockUbic:{...vacio(),'R Peña':3960}, sinEtiquetar:'Otero Ramos' }, // estibado en botella sin etiquetar: no está a la venta ni en R Peña
   { id:'cf21', label:'Cab. Franc 2021', max:972,  hex:'#4A1528', stockUbic:{...vacio()} },
   { id:'cf22', label:'Cab. Franc 2022', max:2834, hex:'#7B2040', stockUbic:{...vacio(),'R Peña':894,'Pipi':18,'Lucas':15} },
   { id:'ch22', label:'Chardonnay 2022', max:2208, hex:'#C4A84F', stockUbic:{...vacio()} },
@@ -587,7 +587,7 @@ function TransferForm({productos,applyTransfer,user,showToast,onBack,refresh,bor
 }
 
 // ── DASHBOARD ────────────────────────────────────────────────────────────
-function DashboardScreen({user,onNavigate,price,source,productos,last,operacionesPendientes,resumenCajas}){
+function DashboardScreen({user,onNavigate,price,source,productos,sinEtiquetar=[],last,operacionesPendientes,resumenCajas}){
   const {tc,err:tcErr}=useDolarBlue();
   // Detalle de una operación (se abre al tocar una operación pendiente)
   const [detalle,setDetalle]=useState(null);        // null=cerrado, {}=cargando, {...}=datos
@@ -765,6 +765,12 @@ function DashboardScreen({user,onNavigate,price,source,productos,last,operacione
           );
         })}
         {productosOrdenados.length===0&&<div style={{color:C.dim,fontSize:14,fontFamily:'system-ui',textAlign:'center'}}>Sin stock disponible</div>}
+        {sinEtiquetar.map(p=>(
+          <div key={p.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,fontFamily:'system-ui',fontSize:13,color:C.muted,borderTop:`1px solid ${C.border}`,paddingTop:12}}>
+            <span style={{display:'flex',alignItems:'center',gap:8}}><span style={{width:10,height:10,borderRadius:3,background:p.hex}}/>{p.label} · sin etiquetar ({p.sinEtiquetar}), no disponible para la venta</span>
+            <strong style={{fontFamily:'Georgia, serif',fontSize:15,color:C.text}}>{totalStock(p).toLocaleString('es-AR')}</strong>
+          </div>
+        ))}
       </section>
 
       {detalle&&(
@@ -1515,6 +1521,18 @@ function DatosScreen({price,productos}){
             })()}
           </Card>
 
+          {(an.porEncargo||[]).length>0&&(
+            <Card style={{marginTop:12}}>
+              <SL>Elaboración por encargo</SL>
+              {an.porEncargo.map(c=>(
+                <div key={c.cliente} style={{display:'flex',justifyContent:'space-between',gap:8,fontSize:13,fontFamily:'system-ui',color:C.muted,padding:'4px 0'}}>
+                  <span>{c.cliente}</span><strong style={{color:C.text}}>{fmtArsFull(c.ars)} · {fmtUsd(c.usd)}</strong>
+                </div>
+              ))}
+              <div style={{color:C.dim,fontSize:12,fontFamily:'system-ui',marginTop:6,lineHeight:1.5}}>No entra en ventas por mes, por cliente ni en la concentración.</div>
+            </Card>
+          )}
+
           <Card style={{marginTop:12}}>
             <SL>Costo unitario por producto (US$)</SL>
             <BarChartH datos={(an.costoProducto||[]).map(p=>({label:p.producto,valor:p.cuUsd}))} fmt={v=>`US$${v.toFixed(2)}`}/>
@@ -1599,7 +1617,9 @@ function Nav({screen,setScreen}){
 export default function NovatoApp(){
   const [user,setUser]=useState(null);const [screen,setScreen]=useState('dashboard');const [borrador,setBorrador]=useState(null);const [vistaStock,setVistaStock]=useState(null);const [toast,setToast]=useState(null);const [settings,setSettings]=useState(false);
   const {price,source,ops,addOp,stockUbicacion,ventasPendientes,comprasPendientes,operacionesPendientes,clientes,categorias,contactosBalance,ultimoControlStock,ultimosControles,resumenCajas,refresh}=useAppData(user);
-  const {productos,applyTransfer,applySale}=useProductos(stockUbicacion);
+  const {productos:todosProductos,applyTransfer,applySale}=useProductos(stockUbicacion);
+  const productos=todosProductos.filter(p=>!p.sinEtiquetar); // lo que se puede vender, mover y contar
+  const sinEtiquetar=todosProductos.filter(p=>p.sinEtiquetar);
   const {last,save}=useStockControl(ultimoControlStock);
   const showToast=(msg,type='ok')=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
   // Navegación: ir a una pantalla limpia, o llegar con un borrador de la carga rápida ya cargado.
@@ -1633,11 +1653,11 @@ export default function NovatoApp(){
         <button onClick={()=>setSettings(true)} aria-label="Cuenta y ajustes" style={{display:'flex',alignItems:'center',gap:8,minHeight:44,background:C.cork,border:`1px solid ${C.border}`,borderRadius:22,padding:'4px 14px 4px 5px',color:C.text,fontSize:14,fontFamily:'system-ui',cursor:'pointer'}}><Avatar u={user} s={34}/><span>{user.nombre}</span><Ico n="ajustes" s={16} c={C.dim}/></button>
       </div>
       <main style={{paddingBottom:'calc(96px + env(safe-area-inset-bottom, 0px))'}}>
-        {screen==='dashboard'&&<DashboardScreen user={user} onNavigate={irA} price={price} source={source} productos={productos} last={last} operacionesPendientes={operacionesPendientes} resumenCajas={resumenCajas}/>}
+        {screen==='dashboard'&&<DashboardScreen user={user} onNavigate={irA} price={price} source={source} productos={productos} sinEtiquetar={sinEtiquetar} last={last} operacionesPendientes={operacionesPendientes} resumenCajas={resumenCajas}/>}
         {screen==='venta'&&<VentaScreen user={user} onBack={()=>irA('dashboard')} showToast={showToast} addOp={addOp} price={price} productos={productos} applySale={applySale} clientes={clientes} categorias={categorias} contactosBalance={contactosBalance} refresh={refresh} onIrA={irConBorrador}/>}
         {screen==='caja'&&<CajaScreen user={user} onBack={()=>irA('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes} comprasPendientes={comprasPendientes} refresh={refresh} resumenCajas={resumenCajas} categorias={categorias} contactosBalance={contactosBalance} clientes={clientes} borrador={borrador}/>}
         {screen==='stock'&&<StockScreen onBack={()=>irA('dashboard')} showToast={showToast} productos={productos} applyTransfer={applyTransfer} user={user} refresh={refresh} last={last} save={save} vistaInicial={vistaStock} borrador={borrador} ultimosControles={ultimosControles}/>}
-        {screen==='datos'&&<DatosScreen price={price} productos={productos}/>}
+        {screen==='datos'&&<DatosScreen price={price} productos={todosProductos}/>}
       </main>
       <Nav screen={screen} setScreen={irA}/>
     </div>

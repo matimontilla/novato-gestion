@@ -689,6 +689,16 @@ function getOperacionesPendientes() {
 // Todas las agregaciones para los gráficos, en UNA sola lectura de BALANCE.
 // Columnas usadas: B fecha, C detalle, D subdetalle, E producto, F añada, G monto$,
 // H montoUS$, K CU US$, M botellas, N concepto.
+// Clientes a los que se les elaboró vino por encargo (no es venta comercial de Novato):
+// su operación suma al flujo y al margen por añada, pero no a ventas por mes, por
+// cliente, por producto ni a la concentración. Se informan aparte en `porEncargo`.
+var CLIENTES_POR_ENCARGO = ['Yuniku'];
+function esClientePorEncargo_(nombre) {
+  var n = String(nombre || '').trim().toLowerCase();
+  for (var i = 0; i < CLIENTES_POR_ENCARGO.length; i++) if (CLIENTES_POR_ENCARGO[i].toLowerCase() === n) return true;
+  return false;
+}
+
 function getAnalytics() {
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   if (!balance) return {};
@@ -697,7 +707,7 @@ function getAnalytics() {
   var data = balance.getRange(3, 1, lastRow - 2, 19).getValues();
 
   var ventasMes = {}, ventasCliente = {}, flujoAnio = {}, anadaVentas = {}, anadaCostos = {},
-      costoProducto = {}, insumosAnada = {}, ventasProducto = {};
+      costoProducto = {}, insumosAnada = {}, ventasProducto = {}, porEncargo = {};
 
   for (var i = 0; i < data.length; i++) {
     var r        = data[i];
@@ -719,7 +729,13 @@ function getAnalytics() {
     if (montoArs > 0) { flujoAnio[anio].ingresosArs += montoArs; flujoAnio[anio].ingresosUsd += montoUsd; }
     else if (montoArs < 0) { flujoAnio[anio].egresosArs += -montoArs; flujoAnio[anio].egresosUsd += -montoUsd; }
 
-    if (detalle === 'Venta') {
+    var porEncargoFila = detalle === 'Venta' && esClientePorEncargo_(contacto);
+    if (porEncargoFila) {
+      if (!porEncargo[contacto]) porEncargo[contacto] = { cliente: contacto, ars: 0, usd: 0 };
+      porEncargo[contacto].ars += montoArs; porEncargo[contacto].usd += montoUsd;
+    }
+
+    if (detalle === 'Venta' && !porEncargoFila) {
       // Ventas por mes
       var mes = anio + '-' + ('0' + (fecha.getMonth() + 1)).slice(-2);
       if (!ventasMes[mes]) ventasMes[mes] = { periodo: mes, anio: anio, ars: 0, usd: 0, botellas: 0 };
@@ -743,6 +759,10 @@ function getAnalytics() {
         if (!anadaVentas[anada]) anadaVentas[anada] = { anada: anada, ars: 0, usd: 0, botellas: 0 };
         anadaVentas[anada].ars += montoArs; anadaVentas[anada].usd += montoUsd; anadaVentas[anada].botellas += botellas;
       }
+    } else if (porEncargoFila && anada) {
+      // El encargo sí cuenta en el margen de su añada (sus costos están ahí), sin botellas de venta.
+      if (!anadaVentas[anada]) anadaVentas[anada] = { anada: anada, ars: 0, usd: 0, botellas: 0 };
+      anadaVentas[anada].ars += montoArs; anadaVentas[anada].usd += montoUsd;
     }
 
     if (concepto === 'Egreso') {
@@ -794,6 +814,7 @@ function getAnalytics() {
     ventasMes:     aLista(ventasMes, function(x, y) { return x.periodo < y.periodo ? -1 : 1; }),
     ventasCliente: aLista(ventasCliente, function(x, y) { return y.ars - x.ars; }),
     ventasProducto: aLista(ventasProducto, function(x, y) { return y.ars - x.ars; }),
+    porEncargo:    aLista(porEncargo, function(x, y) { return y.ars - x.ars; }),
     flujoAnual:    aLista(flujoAnio, function(x, y) { return x.anio - y.anio; }),
     margenAnada:   margenAnada,
     costoProducto: aLista(costoProducto, function(x, y) { return y.cuUsd - x.cuUsd; }),
