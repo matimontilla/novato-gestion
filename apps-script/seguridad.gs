@@ -122,6 +122,11 @@ function despachar_(action, p) {
   p.user = uid ? USER_NOMBRES[uid] : usuarioConocido_(p.user);
 
   if (action === 'changePin') return cambiarPin_(uid, p);
+  // La carga rápida gasta crédito de la API: exige sesión del servidor SIEMPRE, también en el modo de transición.
+  if (action === 'interpretarCarga') {
+    if (!uid) return { ok: false, code: 'IA_SIN_SESION', mensaje: 'Para usar la carga rápida entrá con tu PIN del servidor.' };
+    return interpretarCarga_(p, uid);
+  }
   if (ACCIONES_ESCRITURA.indexOf(action) !== -1) return escrituraProtegida_(action, p);
   return ejecutarAccion_(action, p);
 }

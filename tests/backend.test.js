@@ -34,6 +34,11 @@ function cargarBackend() {
       computeHmacSha256Signature: (t, k) => [...crypto.createHmac('sha256', k).update(t).digest()],
       base64EncodeWebSafe: bytes => Buffer.from(bytes.map(b => b & 0xff)).toString('base64url'),
       getUuid: () => crypto.randomUUID(),
+      // Simula formatDate para los patrones que usa el backend (zona horaria incluida).
+      formatDate: (d, tz, fmt) => {
+        const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23', minute: '2-digit' }).formatToParts(d).map(x => [x.type, x.value]));
+        return fmt.replace('yyyy', parts.year).replace('MM', parts.month).replace('dd', parts.day).replace('HH', parts.hour).replace('mm', parts.minute);
+      },
     },
     ContentService: { createTextOutput: s => ({ s, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
     SpreadsheetApp: {},
@@ -41,7 +46,7 @@ function cargarBackend() {
     Logger: { log() {} },
   };
   vm.createContext(ctx);
-  for (const f of ['seguridad.gs', 'novatobackend.gs']) {
+  for (const f of ['seguridad.gs', 'novatobackend.gs', 'asistente.gs']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'apps-script', f), 'utf8'), ctx, { filename: f });
   }
   // Doble del teléfono/Telegram y del stock, para no depender del Sheet.
@@ -230,4 +235,135 @@ test('doGet y doPost: un error inesperado vuelve como {error}, no como excepció
   b.run('ejecutarAccion_ = function(){ throw new Error("rompió"); }');
   b.ctx.__e = { parameter: { action: 'getData' } };
   assert.equal(JSON.parse(b.run('doGet(__e)').s).error, 'rompió');
+});
+
+// ── Carga rápida (asistente.gs) ──────────────────────────────────────
+function conIa(respuestas) {
+  const b = conAuth();
+  b.telegram.length = 0;
+  b.run('props_().setProperty("ANTHROPIC_API_KEY","sk-ant-PRUEBA")');
+  b.ctx.__fetchs = [];
+  b.ctx.__resps = respuestas;
+  b.ctx.UrlFetchApp = { fetch: (url, opt) => { b.ctx.__fetchs.push({ url, opt }); const r = b.ctx.__resps.shift(); return { getResponseCode: () => r.code, getContentText: () => JSON.stringify(r.body) }; } };
+  b.run(`
+    getContactosBalance = function(){ return [{nombre:"Organyca",ultimaFecha:2},{nombre:"Rosario",ultimaFecha:1}]; };
+    getClientes = function(){ return [{nombre:"Particular"}]; };
+    getCategoriasBalance = function(){ return [{detalle:"Venta",tipo:"Ingreso",total:9},{detalle:"Muestra",tipo:"Neutro",total:2}]; };
+  `);
+  return b;
+}
+const respTool = input => ({ code: 200, body: { content: [{ type: 'tool_use', name: 'borrador', input }] } });
+const tokenDe = (b, uid = 'mati') => b.run(`login_({userId:${J(uid)}, pin:"1234"})`).token;
+const asistente = (b, texto, extra = {}) => { const t = tokenDe(b); return b.run(`despachar_("interpretarCarga", ${J({ token: t, texto, ...extra })})`); };
+
+test('IA: sin clave de API la función se apaga con un mensaje claro', () => {
+  const b = conAuth();
+  const r = asistente(b, 'vendí 3 malbec');
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'IA_NO_CONFIGURADA');
+});
+
+test('IA: sin sesión del servidor no se puede usar (aunque AUTH_REQUIRED esté apagado)', () => {
+  const b = conIa([respTool({ tipo: 'venta' })]);
+  const r = b.run('despachar_("interpretarCarga", {texto:"vendí 3 malbec"})');
+  assert.equal(r.code, 'IA_SIN_SESION');
+  assert.equal(b.ctx.__fetchs.length, 0); // ni siquiera llamó a la API
+});
+
+test('IA: una venta con precio unitario: el total lo calcula el código y los nombres se llevan a la lista', () => {
+  const b = conIa([respTool({
+    tipo: 'venta', detalle: 'venta', contacto: 'organyca', canal: 'distribuidor', fecha: '2026-11-21',
+    lineas: [{ producto: 'malbec 2022', deposito: 'r peña', botellas: 12, precio_unitario: 9000 }],
+    avisos: [],
+  })]);
+  const r = asistente(b, 'Vendí 12 Malbec 2022 a Organyca a 9000 cada una');
+  assert.equal(r.ok, true);
+  const p = r.propuesta;
+  assert.equal(p.tipo, 'venta');
+  assert.equal(p.contacto, 'Organyca');
+  assert.equal(p.contactoEsNuevo, false);
+  assert.equal(p.detalle, 'Venta');
+  assert.equal(p.canal, 'Distribuidor');
+  assert.equal(p.fecha, '2026-11-21');
+  assert.equal(p.lineas[0].producto, 'Malbec 2022');
+  assert.equal(p.lineas[0].deposito, 'R Peña');
+  assert.equal(p.lineas[0].monto, 108000);
+});
+
+test('IA: lo inventado o fuera de lista se vacía y se avisa; un cliente nuevo se marca', () => {
+  const b = conIa([respTool({
+    tipo: 'venta', contacto: 'Vinoteca Nueva', canal: 'Marte', fecha: '2026-13-45',
+    lineas: [{ producto: 'Syrah 2019', deposito: 'Luna', botellas: 5 }],
+  })]);
+  const p = asistente(b, 'dejé 5 syrah en la vinoteca nueva').propuesta;
+  assert.equal(p.contactoEsNuevo, true);
+  assert.equal(p.canal, '');
+  assert.equal(p.fecha, '');
+  assert.equal(p.lineas[0].producto, '');
+  assert.equal(p.lineas[0].deposito, '');
+  assert.equal(p.lineas[0].monto, '');
+  assert.ok(p.avisos.length >= 4);
+});
+
+test('IA: movimiento de caja y transferencia se normalizan; montos inválidos quedan vacíos', () => {
+  const b = conIa([
+    respTool({ tipo: 'movimiento_caja', contacto: 'Rosario', movimiento: { tipo: 'cobro', monto: 50000, caja: 'pipi (andrés)' } }),
+    respTool({ tipo: 'transferencia', transferencia: { producto: 'blend 2023', cantidad: 20.4, desde: 'R Peña', hacia: 'pipi' } }),
+    respTool({ tipo: 'movimiento_caja', movimiento: { tipo: 'gasto', monto: -5, caja: 'Mati' } }),
+  ]);
+  const m = asistente(b, 'me pagó rosario 50 mil a la caja de pipi').propuesta;
+  assert.equal(m.tipo, 'movimiento');
+  assert.equal(m.movimiento.tipo, 'cobro');
+  assert.equal(m.movimiento.monto, 50000);
+  assert.equal(m.movimiento.caja, 'Pipi (Andrés)');
+  const t = asistente(b, 'pasé 20 blend de r peña a pipi').propuesta;
+  assert.equal(t.tipo, 'transferencia');
+  assert.equal(t.transferencia.cantidad, 20);
+  assert.equal(t.transferencia.hacia, 'Pipi');
+  const neg = asistente(b, 'gasté algo').propuesta;
+  assert.equal(neg.movimiento.monto, '');
+});
+
+test('IA: una venta sin líneas pasa a no_entiendo', () => {
+  const b = conIa([respTool({ tipo: 'venta', contacto: 'Organyca', lineas: [] })]);
+  const p = asistente(b, 'vendí algo a organyca').propuesta;
+  assert.equal(p.tipo, 'no_entiendo');
+});
+
+test('IA: se manda el catálogo de nombres pero ningún monto ni saldo, y la clave va solo en el header', () => {
+  const b = conIa([respTool({ tipo: 'no_entiendo' })]);
+  asistente(b, 'hola');
+  const { url, opt } = b.ctx.__fetchs[0];
+  assert.equal(url, 'https://api.anthropic.com/v1/messages');
+  assert.equal(opt.headers['x-api-key'], 'sk-ant-PRUEBA');
+  const cuerpo = JSON.parse(opt.payload);
+  assert.equal(cuerpo.model, 'claude-haiku-5-5');
+  assert.equal(cuerpo.tool_choice.name, 'borrador');
+  assert.ok(cuerpo.system.includes('Organyca') && cuerpo.system.includes('Malbec 2022') && cuerpo.system.includes('Pipi (Andrés)'));
+  assert.ok(!opt.payload.includes('sk-ant-PRUEBA'));
+  assert.ok(!/saldo|precio ref/i.test(cuerpo.system));
+});
+
+test('IA: errores de la API se traducen sin filtrar la clave', () => {
+  const b = conIa([{ code: 401, body: { error: { message: 'invalid x-api-key sk-ant-PRUEBA' } } }, { code: 429, body: {} }, { code: 200, body: { content: [] } }]);
+  const a = asistente(b, 'uno');
+  assert.equal(a.code, 'IA_ERROR');
+  assert.ok(!JSON.stringify(a).includes('sk-ant'));
+  assert.match(asistente(b, 'dos').mensaje, /no está disponible/);
+  assert.equal(asistente(b, 'tres').code, 'IA_ERROR');
+});
+
+test('IA: frase vacía o demasiado larga se rechaza sin llamar a la API', () => {
+  const b = conIa([]);
+  assert.equal(asistente(b, '   ').code, 'VACIO');
+  assert.equal(asistente(b, 'x'.repeat(501)).code, 'LARGO');
+  assert.equal(b.ctx.__fetchs.length, 0);
+});
+
+test('IA: límite por usuario por hora', () => {
+  const b = conIa(Array.from({ length: 31 }, () => respTool({ tipo: 'no_entiendo' })));
+  for (let i = 0; i < 30; i++) assert.equal(asistente(b, 'hola ' + i).ok, true);
+  const r = asistente(b, 'una más');
+  assert.equal(r.code, 'LIMITE');
+  assert.equal(b.ctx.__fetchs.length, 30);
 });
