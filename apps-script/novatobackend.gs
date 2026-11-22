@@ -105,6 +105,7 @@ function getData() {
     operacionesPendientes: getOperacionesPendientes(),
     clientes:           getClientes(),
     ultimoControlStock: getUltimoControlStock(),
+    ultimosControles:   getUltimosControlesPorDeposito(),
     resumenCajas:       getResumenCajas(),
     categorias:         getCategoriasBalance(),
     contactosBalance:   getContactosBalance()
@@ -966,29 +967,52 @@ function addStockControl(p) {
   return { ok: true };
 }
 
-// Devuelve el control físico más reciente (agrupando las filas que comparten el
-// mismo REGISTRADO), para que cualquier dispositivo vea el mismo "último control".
-function getUltimoControlStock() {
+// Agrupa las filas de la hoja de controles en "sesiones" (filas que comparten REGISTRADO y depósito).
+// Función pura (recibe los valores de la hoja) para poder probarla sin el Sheet.
+// Devuelve { ultimo: sesión más reciente de todas, porDeposito: { depósito: su sesión más reciente } }.
+// Cada sesión: { fecha, hora, deposito, items:[{label, stock, real, diff}] }.
+function agruparControles_(data) {
+  var sesiones = {}, orden = [];
+  for (var i = 0; i < data.length; i++) {
+    var row = data[i], ts = row[8];
+    if (!(ts instanceof Date)) continue;
+    var k = row[3] + '|' + ts.getTime();
+    if (!sesiones[k]) {
+      sesiones[k] = { ts: ts.getTime(), fecha: formatDate(row[0]), hora: formatHora(row[1]), deposito: row[3], items: [] };
+      orden.push(k);
+    }
+    sesiones[k].items.push({ label: row[4], stock: row[5], real: row[6], diff: row[7] });
+  }
+  var ultimo = null, porDeposito = {};
+  orden.forEach(function(k) {
+    var se = sesiones[k];
+    if (!ultimo || se.ts > ultimo.ts) ultimo = se;
+    if (!porDeposito[se.deposito] || se.ts > porDeposito[se.deposito].ts) porDeposito[se.deposito] = se;
+  });
+  function limpio(se) { return se ? { fecha: se.fecha, hora: se.hora, deposito: se.deposito, items: se.items } : null; }
+  var out = {};
+  Object.keys(porDeposito).forEach(function(d) { out[d] = limpio(porDeposito[d]); });
+  return { ultimo: limpio(ultimo), porDeposito: out };
+}
+
+function leerControles_() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TAB_CONTROL);
   if (!sheet || sheet.getLastRow() < 2) return null;
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getValues();
+  return agruparControles_(sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getValues());
+}
 
-  var maxTs = null;
-  for (var i = 0; i < data.length; i++) {
-    var ts = data[i][8];
-    if (ts instanceof Date && (!maxTs || ts.getTime() > maxTs.getTime())) maxTs = ts;
-  }
-  if (!maxTs) return null;
+// Devuelve el control físico más reciente (de cualquier depósito), para que cualquier
+// dispositivo vea el mismo "último control".
+function getUltimoControlStock() {
+  var c = leerControles_();
+  return c ? c.ultimo : null;
+}
 
-  var fecha = '', hora = '', deposito = '', items = [];
-  for (var j = 0; j < data.length; j++) {
-    var row = data[j];
-    if (row[8] instanceof Date && row[8].getTime() === maxTs.getTime()) {
-      fecha = formatDate(row[0]); hora = formatHora(row[1]); deposito = row[3];
-      items.push({ label: row[4], stock: row[5], real: row[6], diff: row[7] });
-    }
-  }
-  return { fecha: fecha, hora: hora, deposito: deposito, items: items };
+// Último control de CADA depósito: { 'R Peña': {fecha,hora,deposito,items}, ... }.
+// La pestaña Stock lo muestra fijo arriba mientras se carga el nuevo conteo.
+function getUltimosControlesPorDeposito() {
+  var c = leerControles_();
+  return c ? c.porDeposito : {};
 }
 
 // Lee el estado actual de stock por producto y depósito directo de STOCK

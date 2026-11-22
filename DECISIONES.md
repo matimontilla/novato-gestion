@@ -372,6 +372,16 @@ Archivos: `public/manifest.webmanifest`, `public/sw.js`, `public/icons/` y el re
 - Al publicar una versión nueva, las páginas se piden primero a la red, así que se ve la
   actualización sin borrar nada. Si cambia la lógica del service worker, subir `CACHE`.
 
+### Control físico de stock: qué se ve al entrar
+
+La pestaña Stock arranca con los conteos **vacíos** (antes arrancaban en 0 y mostraban todo como
+faltante). Arriba queda fijo el **último control de ese depósito** (fecha, hora y lo contado);
+el teórico es el stock de hoy (último control menos ventas y movimientos). La diferencia aparece
+sólo al cargar el conteo nuevo, y al confirmar el servidor fija STOCK en lo contado.
+El backend devuelve `ultimosControles` (uno por depósito) además de `ultimoControlStock`.
+En "Para resolver" del Inicio van **todas** las ventas con más de 60 días sin cobrar y, al final,
+el aviso de control de stock.
+
 ### Deploy: automático desde GitHub (desde octubre 2026)
 
 Cada push a `main` que toca `apps-script/` dispara la GitHub Action
