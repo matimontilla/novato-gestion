@@ -355,6 +355,20 @@ servidor de Novato.
 y el comportamiento sobre la planilla real; las pruebas usan servicios simulados. Probar con
 frases reales después del primer deploy (ventas, cobros y movimientos de stock).
 
+### App instalable (PWA)
+
+La app se puede "Agregar a pantalla de inicio" y abre como app (sin barra del navegador).
+Archivos: `public/manifest.webmanifest`, `public/sw.js`, `public/icons/` y el registro en
+`src/main.jsx` (sólo en producción). Es un commit separado: para sacarla basta revertirlo.
+- **No guarda datos del negocio.** El service worker sólo guarda la carcasa (la página y los
+  archivos con hash). Las llamadas a Apps Script y a otros dominios van siempre a la red.
+  Sin conexión no hay datos ni operaciones: es a propósito, para no operar con stock viejo.
+- Costo: ninguno (se sirve desde Vercel como el resto).
+- En iPhone se instala desde Safari ("Compartir" → "Agregar a inicio"); en Android, desde
+  Chrome ("Instalar aplicación"). Los íconos son una "N" dorada generada para esta app.
+- Al publicar una versión nueva, las páginas se piden primero a la red, así que se ve la
+  actualización sin borrar nada. Si cambia la lógica del service worker, subir `CACHE`.
+
 ### Deploy: automático desde GitHub (desde octubre 2026)
 
 Cada push a `main` que toca `apps-script/` dispara la GitHub Action
