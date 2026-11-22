@@ -311,10 +311,38 @@ function Chip({activo,punteado,cuadrado,children,style:s,...p}){
     background:activo?C.gold:'transparent',color:activo?'#1A1612':(punteado?C.gold:C.text),
     border:`1px ${punteado&&!activo?'dashed':'solid'} ${activo?C.gold:(punteado?C.goldDim:C.border)}`,...s}}>{children}</button>);
 }
-// Avatar con la inicial (reemplaza a los emojis, que cada celular dibuja distinto).
-const COLORES_AVATAR={mati:'#8C2030',andres:'#2F5A6B',lucas:'#4A6B2F',santi:'#6B4E1F'};
+// Avatar: por defecto la inicial en dorado sobre fondo neutro (igual para todos). Cada usuario puede
+// elegir un emoji o una foto. Se guarda sólo en ESTE celular (localStorage): no viaja al servidor ni a
+// la planilla, así que no hay datos personales en Sheets, pero tampoco acompaña a otro dispositivo.
+const EMOJIS_PERFIL=['🍷','🍇','🏔️','🎿','⛷️','🔥','🔪','🌿','☀️','🌙','⭐','🌵','🐶','🐱','🦊','🐻','🚀','⚽','🎸','📷','🍕','🚲','🌊','🏠'];
+const claveAvatar=id=>`novato_avatar_${id}`;
+function leerAvatar(id){ try{ const r=localStorage.getItem(claveAvatar(id)); return r?JSON.parse(r):null; }catch{ return null; } }
+function guardarAvatar(id,v){
+  try{ if(v) localStorage.setItem(claveAvatar(id),JSON.stringify(v)); else localStorage.removeItem(claveAvatar(id)); }catch{ return false; }
+  window.dispatchEvent(new Event('novato-avatar')); return true;
+}
+// Recorta al cuadrado central y reduce a 160 px (JPEG): pesa unos pocos KB.
+function reducirFoto(file,lado=160){
+  return new Promise((ok,mal)=>{
+    const url=URL.createObjectURL(file); const img=new Image();
+    img.onload=()=>{
+      const c=document.createElement('canvas'); c.width=c.height=lado;
+      const m=Math.min(img.width,img.height);
+      c.getContext('2d').drawImage(img,(img.width-m)/2,(img.height-m)/2,m,m,0,0,lado,lado);
+      URL.revokeObjectURL(url); ok(c.toDataURL('image/jpeg',0.82));
+    };
+    img.onerror=()=>{ URL.revokeObjectURL(url); mal(new Error('imagen')); };
+    img.src=url;
+  });
+}
 function Avatar({u,s=36}){
-  return(<span aria-hidden="true" style={{width:s,height:s,borderRadius:'50%',background:COLORES_AVATAR[u.id]||C.wine,color:'#F6EFE4',display:'inline-flex',alignItems:'center',justifyContent:'center',fontFamily:'Georgia, serif',fontWeight:700,fontSize:Math.round(s*0.45),flexShrink:0}}>{u.nombre.charAt(0)}</span>);
+  const [,refrescar]=useState(0);
+  useEffect(()=>{ const f=()=>refrescar(n=>n+1); window.addEventListener('novato-avatar',f); return ()=>window.removeEventListener('novato-avatar',f); },[]);
+  const a=leerAvatar(u.id);
+  const base={width:s,height:s,borderRadius:'50%',background:C.cork,border:`1px solid ${C.goldDim}`,display:'inline-flex',alignItems:'center',justifyContent:'center',flexShrink:0,overflow:'hidden',boxSizing:'border-box'};
+  if(a?.tipo==='foto'&&a.valor) return(<span aria-hidden="true" style={base}><img src={a.valor} alt="" style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/></span>);
+  if(a?.tipo==='emoji'&&a.valor) return(<span aria-hidden="true" style={{...base,fontSize:Math.round(s*0.52),lineHeight:1}}>{a.valor}</span>);
+  return(<span aria-hidden="true" style={{...base,color:C.gold,fontFamily:'Georgia, serif',fontWeight:700,fontSize:Math.round(s*0.45)}}>{u.nombre.charAt(0)}</span>);
 }
 
 // ── LOGIN ────────────────────────────────────────────────────────────────
@@ -392,8 +420,18 @@ function LoginScreen({onLogin}){
 
 // ── SETTINGS ─────────────────────────────────────────────────────────────
 function SettingsPanel({user,onClose,onLogout,showToast}){
-  const [step,setStep]=useState('menu');const [op,setOp]=useState('');const [np,setNp]=useState('');const [cp,setCp]=useState('');const [saving,setSaving]=useState(false);
+  const [step,setStep]=useState('menu');const [op,setOp]=useState('');const [np,setNp]=useState('');const [cp,setCp]=useState('');const [saving,setSaving]=useState(false);const archivo=useRef(null);
   const conServidor=!!authToken; // con sesión del servidor, el PIN se cambia en el servidor (y vale en todos tus dispositivos)
+  const elegirEmoji=(e)=>{ if(guardarAvatar(user.id,{tipo:'emoji',valor:e})) showToast('Ícono actualizado'); else showToast('No se pudo guardar en este celular','error'); };
+  const usarInicial=()=>{ guardarAvatar(user.id,null); showToast('Volviste a la inicial'); };
+  const subirFoto=async(ev)=>{
+    const f=ev.target.files?.[0]; ev.target.value='';
+    if(!f) return;
+    try{
+      const dataUrl=await reducirFoto(f);
+      if(guardarAvatar(user.id,{tipo:'foto',valor:dataUrl})) showToast('Foto actualizada'); else showToast('No se pudo guardar en este celular','error');
+    }catch(e){ showToast('No pude leer esa imagen. Probá con otra.','error'); }
+  };
   const changePin=async()=>{
     if(conServidor&&op.length!==4){showToast('Ingresá tu PIN actual','error');return;}
     if(np.length!==4){showToast('El PIN debe ser de 4 dígitos','error');return;}
@@ -413,15 +451,26 @@ function SettingsPanel({user,onClose,onLogout,showToast}){
   };
   return(<>
     <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',zIndex:300}}/>
-    <div style={{position:'fixed',bottom:0,left:0,right:0,background:C.barrel,border:`1px solid ${C.border}`,borderRadius:'20px 20px 0 0',padding:'8px 20px 40px',zIndex:301}}>
+    <div style={{position:'fixed',bottom:0,left:0,right:0,background:C.barrel,border:`1px solid ${C.border}`,borderRadius:'20px 20px 0 0',padding:'8px 20px calc(40px + env(safe-area-inset-bottom, 0px))',zIndex:301,maxHeight:'90vh',overflowY:'auto'}}>
       <div style={{width:40,height:4,background:C.border,borderRadius:2,margin:'12px auto 20px'}}/>
       <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:24,paddingBottom:20,borderBottom:`1px solid ${C.border}`}}>
         <Avatar u={user} s={52}/>
         <div><div style={{color:C.text,fontWeight:700,fontSize:18,fontFamily:'Georgia, serif'}}>{user.nombre}</div><div style={{color:C.dim,fontSize:12,fontFamily:'system-ui'}}>{GAS_URL?'Conectado a Google Sheets':'Sin conexión a Google Sheets'}</div></div>
       </div>
       {step==='menu'?(<div style={{display:'flex',flexDirection:'column',gap:10}}><SL>Configuración</SL>
+        <button onClick={()=>setStep('avatar')} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:12,padding:'14px 16px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',color:C.text,fontFamily:'system-ui',fontSize:16,minHeight:52}}><span style={{display:'flex',alignItems:'center',gap:10}}><Ico n="botella" s={20} c={C.gold}/>Cambiar foto o ícono</span><Ico n="chevron" s={18} c={C.dim} w={2}/></button>
         <button onClick={()=>setStep('pin')} style={{background:C.cork,border:`1px solid ${C.border}`,borderRadius:12,padding:'14px 16px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',color:C.text,fontFamily:'system-ui',fontSize:16,minHeight:52}}><span style={{display:'flex',alignItems:'center',gap:10}}><Ico n="candado" s={20} c={C.gold}/>Cambiar PIN</span><Ico n="chevron" s={18} c={C.dim} w={2}/></button>
         <button onClick={onLogout} style={{background:C.wineBg,border:`1px solid ${C.wine}55`,borderRadius:12,padding:'14px 16px',cursor:'pointer',color:'#E07080',fontFamily:'system-ui',fontSize:16,minHeight:52,display:'flex',alignItems:'center',gap:10}}><Ico n="salir" s={20} c="#E07080"/>Cerrar sesión</button>
+      </div>):step==='avatar'?(<div style={{display:'flex',flexDirection:'column',gap:14}}>
+        <button onClick={()=>setStep('menu')} style={{background:'none',border:'none',color:C.muted,cursor:'pointer',fontSize:15,fontFamily:'system-ui',textAlign:'left',marginBottom:4,minHeight:44,display:'flex',alignItems:'center',gap:6}}><Ico n="atras" s={18} c={C.muted} w={2}/>Volver</button>
+        <SL>Foto o ícono de sesión</SL>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(6,minmax(0,1fr))',gap:8}}>
+          {EMOJIS_PERFIL.map(e=><button key={e} onClick={()=>elegirEmoji(e)} aria-label={`Ícono ${e}`} style={{height:48,fontSize:24,background:C.cork,border:`1px solid ${C.border}`,borderRadius:12,cursor:'pointer',padding:0}}>{e}</button>)}
+        </div>
+        <input ref={archivo} type="file" accept="image/*" onChange={subirFoto} style={{display:'none'}}/>
+        <Btn variant="ghost" onClick={()=>archivo.current?.click()}>Subir una foto</Btn>
+        <Btn variant="ghost" onClick={usarInicial}>Usar mi inicial</Btn>
+        <div style={{fontSize:13,color:C.dim,fontFamily:'system-ui',lineHeight:1.4}}>Se guarda sólo en este celular. En otro dispositivo se vuelve a elegir.</div>
       </div>):(<div style={{display:'flex',flexDirection:'column',gap:14}}>
         <button onClick={()=>setStep('menu')} style={{background:'none',border:'none',color:C.muted,cursor:'pointer',fontSize:15,fontFamily:'system-ui',textAlign:'left',marginBottom:4,minHeight:44,display:'flex',alignItems:'center',gap:6}}><Ico n="atras" s={18} c={C.muted} w={2}/>Volver</button>
         <SL>Cambiar PIN</SL>
