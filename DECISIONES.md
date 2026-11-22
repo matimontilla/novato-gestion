@@ -338,6 +338,9 @@ Código: `apps-script/asistente.gs` (acción `interpretarCarga`) y `CargaRapida`
   función se apaga sola y la app muestra "todavía no está activada"; el resto sigue igual.
 - `CLAUDE_MODEL`: opcional. Por defecto `claude-haiku-5-5`.
 
+**Unidades:** una caja = 6 botellas (`BOTELLAS_POR_CAJA` en `asistente.gs`). El modelo sólo informa
+cuántas cajas dijeron el usuario; la conversión y el total (precio por caja × cajas) los hace el código.
+
 **Topes:** 500 caracteres por frase, 30 frases por usuario por hora, 300 por día entre todos
 (constantes al inicio de `asistente.gs`). Es el tope de gasto si alguien abusa.
 

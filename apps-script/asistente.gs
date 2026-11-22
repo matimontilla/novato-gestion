@@ -12,6 +12,7 @@
 
 var CLAUDE_MODEL_DEFAULT = 'claude-haiku-5-5';
 var CANALES_APP          = ['Vinoteca', 'Distribuidor', 'Restaurant', 'Directo', 'Exportación', 'Otro'];
+var BOTELLAS_POR_CAJA    = 6;     // una caja de vino = 6 botellas (dato del negocio)
 var IA_MAX_CHARS         = 500;   // largo máximo de la frase
 var IA_LIMITE_USUARIO_HORA = 30;  // frases por usuario por hora
 var IA_LIMITE_DIA        = 300;   // frases de todos juntos por día (tope de gasto)
@@ -74,6 +75,7 @@ function promptIa_(cat) {
     '- Precios: si dicen "a 9000 cada una" poné precio_unitario=9000 y no calcules el total. Si dicen un total ("por 108 mil") poné monto_total. Los números en pesos argentinos: "108 mil" = 108000, "9 lucas" = 9000.',
     '- "Pipi" puede ser un depósito (botellas) o la caja de Andrés (plata): decidilo según si habla de botellas o de plata.',
     '- Una operación con varios productos va como varias entradas en "lineas".',
+    '- Cajas: si dicen "caja(s)", poné el número en "cajas" (media caja = 0.5) y NO lo conviertas a botellas ni lo sumes a "botellas": el código hace la conversión. "botellas" es sólo para botellas sueltas ("2 cajas y 3 botellas" = cajas 2, botellas 3). Lo mismo en transferencias ("cajas" en vez de "cantidad"). Si dicen un precio por caja ("a 50 mil la caja") poné precio_por_caja y no calcules el total.',
     '',
     'Listas válidas:',
     'Productos: ' + cat.productos.join(' | '),
@@ -102,11 +104,13 @@ function esquemaIa_(cat) {
           properties: {
             producto:        { type: 'string' },
             deposito:        { type: 'string' },
-            botellas:        { type: 'integer' },
+            botellas:        { type: 'integer', description: 'Botellas sueltas (sin contar las cajas)' },
+            cajas:           { type: 'number', description: 'Cantidad de cajas, tal como la dijeron (0.5 = media caja)' },
             precio_unitario: { type: 'number', description: 'Pesos por botella si lo dijeron' },
+            precio_por_caja: { type: 'number', description: 'Pesos por caja si lo dijeron' },
             monto_total:     { type: 'number', description: 'Pesos totales de la línea si lo dijeron' }
           },
-          required: ['producto', 'botellas']
+          required: ['producto']
         }
       },
       movimiento: {
@@ -121,7 +125,8 @@ function esquemaIa_(cat) {
       transferencia: {
         type: 'object',
         properties: {
-          producto: { type: 'string' }, cantidad: { type: 'integer' },
+          producto: { type: 'string' }, cantidad: { type: 'integer', description: 'Botellas sueltas (sin contar las cajas)' },
+          cajas: { type: 'number', description: 'Cantidad de cajas, tal como la dijeron (0.5 = media caja)' },
           desde: { type: 'string' }, hacia: { type: 'string' }
         }
       },
@@ -165,12 +170,17 @@ function normalizarBorrador_(raw, cat) {
   try { out.fecha = raw.fecha ? fechaValida_(raw.fecha) : ''; } catch (e) { out.fecha = ''; avisos.push('No entendí la fecha; se usa la de hoy.'); }
 
   out.lineas = (Array.isArray(raw.lineas) ? raw.lineas : []).slice(0, 20).map(function(l) {
-    var botellas = Math.round(Number(l.botellas));
-    if (!isFinite(botellas) || botellas < 0 || botellas > 100000) botellas = 0;
+    var sueltas = Math.round(Number(l.botellas));
+    if (!isFinite(sueltas) || sueltas < 0) sueltas = 0;
+    var cajas = Number(l.cajas);
+    if (!isFinite(cajas) || cajas < 0 || cajas > 100000) cajas = 0;
+    var botellas = sueltas + Math.round(cajas * BOTELLAS_POR_CAJA); // la conversión caja -> botellas la hace el código
+    if (botellas > 100000) botellas = 0;
     var monto = '';
-    var pu = Number(l.precio_unitario), mt = Number(l.monto_total);
+    var pu = Number(l.precio_unitario), mt = Number(l.monto_total), pc = Number(l.precio_por_caja);
     if (isFinite(mt) && mt > 0 && mt <= 1e10) monto = Math.round(mt);
     else if (isFinite(pu) && pu > 0 && botellas > 0 && pu * botellas <= 1e10) monto = Math.round(pu * botellas); // el cálculo lo hace el código, no el modelo
+    else if (isFinite(pc) && pc > 0 && cajas > 0 && pc * cajas <= 1e10) monto = Math.round(pc * cajas);
     return {
       producto: listaOAviso(l.producto, cat.productos, 'El producto'),
       deposito: listaOAviso(l.deposito, cat.depositos, 'El depósito'),
@@ -190,6 +200,9 @@ function normalizarBorrador_(raw, cat) {
 
   var t = raw.transferencia || {};
   var cant = Math.round(Number(t.cantidad));
+  if (!isFinite(cant) || cant < 0) cant = 0;
+  var cajasT = Number(t.cajas);
+  if (isFinite(cajasT) && cajasT > 0 && cajasT <= 100000) cant += Math.round(cajasT * BOTELLAS_POR_CAJA);
   out.transferencia = {
     producto: t.producto ? listaOAviso(t.producto, cat.productos, 'El producto') : '',
     cantidad: (isFinite(cant) && cant > 0 && cant <= 100000) ? cant : '',
