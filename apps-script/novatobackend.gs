@@ -48,27 +48,49 @@ var CLIENTE_PREFIJO = {
 };
 
 // ── ROUTER PRINCIPAL ────────────────────────────────────────────────
+// doGet (lecturas, y escrituras por compatibilidad) y doPost (escrituras de la app
+// nueva) pasan por despachar_() de seguridad.gs, que valida el token, toma el candado
+// en las escrituras y evita duplicados antes de llegar a ejecutarAccion_().
 function doGet(e) {
-  var action = e.parameter.action || 'getData';
+  return responder_(function() { return despachar_(e.parameter.action || 'getData', e.parameter); });
+}
+
+// El navegador manda el cuerpo como texto plano con JSON adentro (así no dispara el
+// preflight de CORS, que Apps Script no responde). Los valores van como en el GET:
+// textos, con las listas (lineas, items) ya serializadas.
+function doPost(e) {
+  return responder_(function() {
+    var cuerpo = {};
+    try { cuerpo = JSON.parse((e.postData && e.postData.contents) || '{}'); }
+    catch (err) { return { error: 'Pedido ilegible.' }; }
+    var p = {};
+    for (var k in cuerpo) { p[k] = (typeof cuerpo[k] === 'object' && cuerpo[k] !== null) ? JSON.stringify(cuerpo[k]) : cuerpo[k]; }
+    return despachar_(p.action || 'getData', p);
+  });
+}
+
+function responder_(fn) {
   var result;
-  try {
-    if      (action === 'getData')       result = getData();
-    else if (action === 'addTransaccion') result = addTransaccion(e.parameter);
-    else if (action === 'addMovement')   result = addMovement(e.parameter);
-    else if (action === 'addTransfer')   result = addTransfer(e.parameter);
-    else if (action === 'addStockControl') result = addStockControl(e.parameter);
-    else if (action === 'getOps')        result = { ops: getRecentOps(20) };
-    else if (action === 'getMovimientosCaja') result = { movimientos: getMovimientosCaja(100) };
-    else if (action === 'getDetalleOperacion') result = getDetalleOperacion(e.parameter.referencia);
-    else if (action === 'getInsumos')    result = getInsumos();
-    else if (action === 'getAnalytics')  result = getAnalytics();
-    else                                 result = { error: 'Acción desconocida: ' + action };
-  } catch(err) {
-    result = { error: err.toString() };
-  }
+  try { result = fn(); }
+  catch (err) { result = { error: String(err && err.message ? err.message : err) }; }
   return ContentService
     .createTextOutput(JSON.stringify(result))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// Tabla de acciones. Se llama sólo desde despachar_() (ya autenticado).
+function ejecutarAccion_(action, p) {
+  if      (action === 'getData')             return getData();
+  else if (action === 'addTransaccion')      return addTransaccion(p);
+  else if (action === 'addMovement')         return addMovement(p);
+  else if (action === 'addTransfer')         return addTransfer(p);
+  else if (action === 'addStockControl')     return addStockControl(p);
+  else if (action === 'getOps')              return { ops: getRecentOps(20) };
+  else if (action === 'getMovimientosCaja')  return { movimientos: getMovimientosCaja(100) };
+  else if (action === 'getDetalleOperacion') return getDetalleOperacion(p.referencia);
+  else if (action === 'getInsumos')          return getInsumos();
+  else if (action === 'getAnalytics')        return getAnalytics();
+  return { error: 'Acción desconocida: ' + action };
 }
 
 // ── GET DATA (carga inicial de la app) ──────────────────────────────
@@ -465,10 +487,22 @@ function addTransaccion(p) {
   var balance = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('BALANCE');
   if (!balance) throw new Error('No se encontró la pestaña BALANCE');
 
-  var detalle  = p.detalle || 'Venta';
-  var contacto = p.contacto || '';
-  var lineas   = JSON.parse(p.lineas || '[]');
-  if (!lineas.length) throw new Error('No hay líneas de producto para registrar');
+  // Todo lo que llega del cliente se valida y sanea antes de tocar la planilla.
+  var detalle  = textoSeguro_(p.detalle, 60) || 'Venta';
+  var contacto = textoSeguro_(p.contacto, 80);
+  fechaValida_(p.fecha);
+  var lineasRaw = JSON.parse(p.lineas || '[]');
+  if (!Array.isArray(lineasRaw) || !lineasRaw.length) throw new Error('No hay líneas de producto para registrar');
+  if (lineasRaw.length > 20) throw new Error('Demasiadas líneas en una misma operación (máximo 20).');
+  var lineas = lineasRaw.map(function(l) {
+    return {
+      producto: productoValido_(l.producto),
+      deposito: l.deposito ? depositoValido_(l.deposito) : '',
+      botellas: entero_(l.botellas, 'Las botellas', 0, 100000),
+      monto:    numero_(l.monto, 'El monto', 0, 1e10)
+    };
+  });
+  validarStockLineas_(lineas); // antes de escribir nada: si no alcanza el stock, no se carga nada
 
   var categorias = getCategoriasBalance();
   var cat  = categorias.filter(function(c) { return c.detalle === detalle; })[0];
@@ -823,6 +857,7 @@ function getInsumos() {
 // tiene varios productos, el monto se reparte proporcionalmente entre una fila de
 // CAJA por producto (mismo patrón que BALANCE), en vez de una sola fila ambigua.
 function addMovement(p) {
+  p = sanearMovimiento_(p);
   var caja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('CAJA');
   if (!caja) throw new Error('No se encontró la pestaña CAJA');
 
@@ -873,7 +908,9 @@ function addMovement(p) {
 
 // ── TRANSFERENCIAS ENTRE DEPÓSITOS → STOCK ───────────────────────────
 function addTransfer(p) {
-  var cantidad = parseInt(p.cantidad) || 0;
+  p = sanearTransferencia_(p);
+  if (!p.producto) throw new Error('Falta el producto.');
+  var cantidad = p.cantidad;
   ajustarStockUbicacion(p.producto, p.desde, p.hacia, cantidad);
 
   var headers = ['FECHA','PRODUCTO','CANTIDAD','DESDE','HACIA','NOTAS','USUARIO','REGISTRADO'];
@@ -893,17 +930,29 @@ function addTransfer(p) {
 // p.items viene como JSON: [{label, stock, real, diff}, ...] — una fila por producto,
 // todas con el mismo REGISTRADO (timestamp) para poder agruparlas como una sesión.
 function addStockControl(p) {
-  var headers = ['FECHA','HORA','USUARIO','DEPOSITO','PRODUCTO','TEORICO','REAL','DIFERENCIA','REGISTRADO'];
-  var sheet   = getOrCreateSheet(TAB_CONTROL, headers);
-  var items   = JSON.parse(p.items || '[]');
-  var ahora   = new Date();
+  var deposito = depositoValido_(p.deposito);
+  var headers  = ['FECHA','HORA','USUARIO','DEPOSITO','PRODUCTO','TEORICO','REAL','DIFERENCIA','REGISTRADO'];
+  var sheet    = getOrCreateSheet(TAB_CONTROL, headers);
+  var crudos   = JSON.parse(p.items || '[]');
+  if (!Array.isArray(crudos) || !crudos.length || crudos.length > 20) throw new Error('Control de stock inválido.');
+  var ahora    = new Date();
+  // Fecha y hora las pone el servidor (hora de Mendoza) y el teórico es el que hay hoy en
+  // STOCK: la diferencia no depende de lo que haya visto el celular (que puede estar desactualizado).
+  var fecha    = formatDate(ahora), hora = formatHora(ahora);
+  var actual   = getStockUbicacion();
+  var items    = crudos.map(function(it) {
+    var label  = productoValido_(it.label);
+    var real   = entero_(it.real, 'El conteo real', 0, 100000);
+    var stock  = Number((actual[label] || {})[deposito]) || 0;
+    return { label: label, stock: stock, real: real, diff: real - stock };
+  });
   items.forEach(function(it) {
-    sheet.appendRow([p.fecha, p.hora, p.user, p.deposito || '', it.label, it.stock, it.real, it.diff, ahora]);
-    fijarStockUbicacion(it.label, p.deposito, it.real); // corrige STOCK con lo contado de verdad
+    sheet.appendRow([fecha, hora, p.user || '', deposito, it.label, it.stock, it.real, it.diff, ahora]);
+    fijarStockUbicacion(it.label, deposito, it.real); // corrige STOCK con lo contado de verdad
   });
 
   var difs = items.filter(function(it) { return it.diff !== 0; });
-  var msg  = '📋 <b>Control de stock: ' + escapeHtml(p.deposito) + '</b>\n';
+  var msg  = '📋 <b>Control de stock: ' + escapeHtml(deposito) + '</b>\n';
   if (difs.length) {
     msg += '⚠ Diferencias:\n' + difs.map(function(it) {
       return '· ' + escapeHtml(it.label) + ': ' + (it.diff > 0 ? '+' : '') + it.diff + ' bot';
@@ -966,6 +1015,26 @@ function getStockUbicacion() {
   return out;
 }
 
+// Verifica ANTES de escribir que el stock alcance para todas las líneas de una operación
+// (sumando las que salen del mismo producto y depósito). Así una venta no queda a medias.
+function validarStockLineas_(lineas) {
+  var pedidos = {};
+  lineas.forEach(function(l) {
+    if (l.producto && l.botellas > 0) {
+      var k = l.producto + '|' + (l.deposito || 'R Peña');
+      pedidos[k] = (pedidos[k] || 0) + l.botellas;
+    }
+  });
+  var actual = getStockUbicacion();
+  Object.keys(pedidos).forEach(function(k) {
+    var partes = k.split('|');
+    var hay = Number((actual[partes[0]] || {})[partes[1]]) || 0;
+    if (pedidos[k] > hay) {
+      throw new Error('Stock insuficiente: hay ' + hay + ' bot de ' + partes[0] + ' en ' + partes[1] + ' y se piden ' + pedidos[k] + '.');
+    }
+  });
+}
+
 // Mueve stock entre depósitos (o sólo descuenta, si hacia es null — para una venta)
 // directo en la tabla de depósitos de STOCK. TOTAL y DIFERENCIA son fórmulas ya
 // existentes en esa tabla y no las tocamos: se recalculan solas.
@@ -985,7 +1054,11 @@ function ajustarStockUbicacion(productoApp, desde, hacia, cantidad) {
   var sheetRow = 12 + rowIdx;
   if (desde) {
     var colDesde = headers.indexOf(UBIC_SHEET_MAP[desde] || desde);
-    if (colDesde > -1) stock.getRange(sheetRow, 2 + colDesde).setValue((Number(data[rowIdx][colDesde]) || 0) - cantidad);
+    if (colDesde > -1) {
+      var quedan = (Number(data[rowIdx][colDesde]) || 0) - cantidad;
+      if (quedan < 0) throw new Error('Stock insuficiente: ' + productoApp + ' en ' + desde + ' (hay ' + (Number(data[rowIdx][colDesde]) || 0) + ', se piden ' + cantidad + ').');
+      stock.getRange(sheetRow, 2 + colDesde).setValue(quedan);
+    }
   }
   if (hacia) {
     var colHacia = headers.indexOf(UBIC_SHEET_MAP[hacia] || hacia);

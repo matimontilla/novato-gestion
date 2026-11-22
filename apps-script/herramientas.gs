@@ -13,6 +13,9 @@
 //                           repararFormatosInsumos
 //  Configuración .......... instalarTriggerBlueApi, obtenerChatIdsTelegram,
 //                           agregarFiltrosEncabezados, ordenarYFormatearColumnasExtra
+//  Seguridad .............. configurarAutenticacion, estadoAutenticacion,
+//                           activarAutenticacionObligatoria, desactivarAutenticacionObligatoria,
+//                           restablecerPin
 // ═══════════════════════════════════════════════════════════════════
 
 // ── UTILIDAD — correr UNA VEZ a mano para averiguar el chat_id de cada persona ──
@@ -585,4 +588,63 @@ function reescribirDiasCierre() {
   }
   SpreadsheetApp.flush();
   Logger.log('Listo — fórmula de DIAS CIERRE reescrita en ' + n + ' fila(s). Corré analizarDiasCierre() para revisar.');
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+//  SEGURIDAD — ver DECISIONES.md ("Seguridad del backend") para el orden de rollout
+// ═══════════════════════════════════════════════════════════════════
+
+// PASO 1 (una vez): crea la clave de firma y deja a los 4 socios con el PIN inicial 1234
+// (sólo a los que todavía no tienen uno; no pisa PIN ya cambiados). Cada uno lo cambia
+// después desde la app (⚙ → Cambiar PIN). No activa la obligatoriedad todavía.
+function configurarAutenticacion() {
+  var props = props_();
+  if (!props.getProperty('AUTH_SECRET')) {
+    props.setProperty('AUTH_SECRET', Utilities.getUuid() + Utilities.getUuid());
+    Logger.log('Clave de firma creada.');
+  }
+  USUARIOS_APP.forEach(function(uid) {
+    if (!props.getProperty('PIN_' + uid)) {
+      props.setProperty('PIN_' + uid, hashPin_(uid, '1234'));
+      Logger.log(USER_NOMBRES[uid] + ': PIN inicial 1234 (cambialo desde la app).');
+    } else {
+      Logger.log(USER_NOMBRES[uid] + ': ya tenía PIN, no se tocó.');
+    }
+  });
+  Logger.log('Listo. Falta: que cada socio entre a la app y cambie su PIN, y recién ahí correr activarAutenticacionObligatoria().');
+}
+
+function estadoAutenticacion() {
+  var props = props_();
+  Logger.log('Clave de firma: ' + (props.getProperty('AUTH_SECRET') ? 'creada' : 'NO creada'));
+  USUARIOS_APP.forEach(function(uid) {
+    Logger.log(USER_NOMBRES[uid] + ': ' + (props.getProperty('PIN_' + uid) ? 'tiene PIN en el servidor' : 'SIN PIN'));
+  });
+  Logger.log('Obligatoria (AUTH_REQUIRED): ' + (authRequerida_() ? 'SÍ — el backend rechaza pedidos sin token' : 'no — todavía acepta pedidos sin token'));
+}
+
+// PASO 2: desde ahora el backend rechaza todo pedido sin sesión válida. Correrlo sólo
+// cuando la app nueva ya esté desplegada en Vercel y los socios hayan probado entrar.
+function activarAutenticacionObligatoria() {
+  if (!authConfigurada_()) { Logger.log('Primero corré configurarAutenticacion().'); return; }
+  props_().setProperty('AUTH_REQUIRED', 'true');
+  Logger.log('Autenticación obligatoria ACTIVADA.');
+}
+
+// Marcha atrás de emergencia: vuelve a aceptar pedidos sin token (como antes).
+function desactivarAutenticacionObligatoria() {
+  props_().setProperty('AUTH_REQUIRED', 'false');
+  Logger.log('Autenticación obligatoria DESACTIVADA (el backend vuelve a aceptar pedidos sin token).');
+}
+
+// Si alguien olvida su PIN: editá el nombre y el PIN de abajo y corré esta función.
+function restablecerPin() {
+  var uid = 'mati';        // mati | andres | lucas | santi
+  var pinNuevo = '1234';   // 4 dígitos; después cambiarlo desde la app
+  if (USUARIOS_APP.indexOf(uid) === -1 || !/^\d{4}$/.test(pinNuevo)) { Logger.log('Revisá el usuario y el PIN.'); return; }
+  if (!authConfigurada_()) { Logger.log('Primero corré configurarAutenticacion().'); return; }
+  props_().setProperty('PIN_' + uid, hashPin_(uid, pinNuevo));
+  CacheService.getScriptCache().remove('fail_' + uid);
+  Logger.log('PIN de ' + USER_NOMBRES[uid] + ' restablecido (y desbloqueado).');
 }

@@ -1,0 +1,30 @@
+# Revisa cada cambio ANTES de que llegue a producción: que la app compile, que pasen
+# las pruebas del backend y que los archivos de Apps Script no tengan errores de sintaxis
+# (un error de sintaxis desplegaría un backend roto, porque clasp push reemplaza todo).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  revisar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Pruebas del backend
+        run: npm test
+      - name: Sintaxis de Apps Script
+        run: |
+          for f in apps-script/*.gs; do
+            cp "$f" "/tmp/$(basename "$f" .gs).js"
+            node --check "/tmp/$(basename "$f" .gs).js" && echo "OK $f"
+          done
+      - name: Compilar la app
+        run: npm run build

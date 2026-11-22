@@ -4,7 +4,7 @@ Memoria del proyecto: **por qué** las cosas están como están. El código dice
 hace; esto dice *por qué*. Si algo acá parece raro, probablemente hay una razón
 dolorosa detrás.
 
-Última actualización: julio 2026.
+Última actualización: noviembre 2026.
 
 ---
 
@@ -254,6 +254,8 @@ descarga. Para auditar el estado real: `diagnosticarErrores()`.
 ### Archivos del backend
 
 - `novatobackend.gs`: lo que usa la app (endpoints, helpers, disparador de BLUE_API).
+- `seguridad.gs`: login con PIN en el servidor, tokens, candado, anti-duplicados y
+  validación de datos (ver "Seguridad del backend").
 - `herramientas.gs`: diagnósticos, reparaciones reutilizables y configuración, para
   correr a mano con ▶ Run. El desplegable del editor muestra sólo las funciones del
   archivo abierto.
@@ -262,6 +264,57 @@ Las funciones de una sola vez que ya se corrieron (reclasificación de costos, c
 DEPOSITO y DIAS CIERRE, migración de zona horaria, etc.) **se borraron en octubre 2026**.
 Este documento las sigue nombrando como antecedente; el código está en el historial de
 GitHub (anterior al commit que crea `herramientas.gs`).
+
+### Seguridad del backend (desde noviembre 2026)
+
+**Por qué:** el backend es una web app pública (`ANYONE_ANONYMOUS`) y la URL va dentro
+del código de la app. Antes, el PIN sólo existía en el celular (por defecto `1234`) y el
+servidor no validaba nada: cualquiera con la URL podía leer la plata de la bodega o
+escribir en el Sheet, y el nombre de quien cargaba lo decía el propio cliente.
+
+**Cómo funciona ahora (`seguridad.gs`):**
+- **Login en el servidor:** la app manda usuario + PIN (`action=login`, por POST). El
+  servidor compara contra un hash guardado en Script Properties (`PIN_<usuario>`, salado
+  con `AUTH_SECRET`) y devuelve un token firmado (HMAC) que vale 12 h. 5 PIN incorrectos
+  bloquean al usuario 15 minutos y avisan por Telegram.
+- **El usuario sale del token**, no de lo que mande el cliente.
+- **Escrituras protegidas:** un candado de script (una carga a la vez: sin referencias
+  repetidas ni stock pisado entre dos socios), y un `requestId` por operación que el
+  servidor recuerda 6 h: si la señal se corta y la app reintenta, no se duplica.
+- **Validación:** caja, depósito, producto y tipo contra listas conocidas; montos,
+  cantidades y fechas con rango; los textos libres pierden símbolos iniciales (`= + - @`)
+  para que Sheets no los ejecute como fórmula. **El servidor también valida stock**
+  (no deja ventas ni movimientos que dejen un depósito en negativo, y chequea todas las
+  líneas ANTES de escribir la primera).
+- **Control de stock:** fecha, hora y "teórico" los fija el servidor (hora de Mendoza),
+  no el celular, que puede tener datos viejos.
+- Un error del backend ahora se muestra al usuario (antes un `{error}` se leía como éxito).
+
+**Rollout seguro (la bandera `AUTH_REQUIRED`):** el código nuevo funciona en modo
+"transición" hasta que se active la obligatoriedad, así no hay un momento en que la
+app y el backend queden desincronizados:
+1. Mergear → se despliegan backend (Action) y app (Vercel).
+2. Correr `configurarAutenticacion()` (crea la clave y deja el PIN inicial `1234` a los
+   que no tengan). Mientras no se corra, la app usa el PIN local de antes.
+3. Cada socio entra a la app y cambia su PIN (⚙ → Cambiar PIN).
+4. Con todos adentro y probado, correr `activarAutenticacionObligatoria()`.
+5. Marcha atrás de emergencia: `desactivarAutenticacionObligatoria()`.
+`estadoAutenticacion()` muestra en qué punto está. Si alguien olvida el PIN:
+`restablecerPin()`.
+
+**Límites que conviene recordar:** son 4 dígitos (el bloqueo por intentos es lo que lo
+hace razonable, no la longitud); el token vive sólo en memoria, así que al recargar la
+app se pide el PIN; la lectura de datos también exige sesión cuando la bandera está activa.
+**Sin verificar en el Sheet real al escribir esto:** el POST desde el navegador a Apps
+Script (la app cae a GET con el mismo `requestId` si el POST falla por red/CORS).
+
+### Pruebas automáticas y CI
+
+`npm test` corre `tests/backend.test.js`: carga `seguridad.gs` y `novatobackend.gs` con los
+servicios de Apps Script simulados y prueba login, tokens, bloqueo, candado, duplicados,
+validaciones y reparto proporcional. No toca el Sheet. La Action `ci.yml` corre las
+pruebas, revisa la sintaxis de los `.gs` y compila la app en cada pull request y push
+(un `.gs` con error de sintaxis desplegaría un backend roto porque `clasp push` reemplaza todo).
 
 ### Deploy: automático desde GitHub (desde octubre 2026)
 

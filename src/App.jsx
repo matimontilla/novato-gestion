@@ -2,8 +2,7 @@ import { useState, useRef, useEffect } from "react";
 
 // ── CONFIG ───────────────────────────────────────────────────────────────
 // Vercel: agregar variable de entorno VITE_GAS_URL con la URL del deployment
-const GAS_URL       = import.meta.env.VITE_GAS_URL       || '';
-const ANTHROPIC_KEY = import.meta.env.VITE_ANTHROPIC_KEY || '';
+const GAS_URL = import.meta.env.VITE_GAS_URL || '';
 
 // ── TOKENS ───────────────────────────────────────────────────────────────
 const C = {
@@ -117,11 +116,50 @@ function fechaLocalHoy(){
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
 
+// ── CONEXIÓN CON EL BACKEND ──────────────────────────────────────────────
+// El token de sesión lo da el servidor al validar el PIN (vale 12 h) y vive sólo en
+// memoria: al cerrar o recargar la app se vuelve a pedir el PIN.
+let authToken = '';
+let alVencerSesion = null; // la app lo registra para volver al login si el servidor dice AUTH
+const nuevoRequestId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+
+// Si el backend contesta con error, se lanza: antes una respuesta {error} se mostraba
+// como "registrado con éxito" porque nadie la miraba.
+function revisarRespuesta(d) {
+  if (d && d.error) {
+    if (d.code === 'AUTH') { authToken = ''; if (alVencerSesion) alVencerSesion(); }
+    const e = new Error(d.error); e.delServidor = true; throw e;
+  }
+  return d;
+}
+// Texto para el toast: si el error vino del servidor se muestra su mensaje (ej. "Stock insuficiente…").
+const textoError = (e, base) => (e && e.delServidor ? e.message : base);
+
+// Lecturas
 async function gasGet(params) {
   if (!GAS_URL) return null;
-  const url = GAS_URL + '?' + new URLSearchParams(params).toString();
-  const r   = await fetch(url, { redirect: 'follow' });
-  return r.json();
+  const q = { ...params }; if (authToken) q.token = authToken;
+  const r = await fetch(GAS_URL + '?' + new URLSearchParams(q).toString(), { redirect: 'follow' });
+  return revisarRespuesta(await r.json());
+}
+
+// Escrituras: POST (texto plano para no disparar el preflight de CORS) con un requestId
+// que el servidor recuerda 6 h. Si la red falla a mitad de camino y se reintenta por GET,
+// el servidor devuelve el resultado anterior en vez de cargar la operación dos veces.
+async function gasPost(params, { soloPost = false } = {}) {
+  if (!GAS_URL) return null;
+  const cuerpo = { ...params, requestId: params.requestId || nuevoRequestId() };
+  if (authToken) cuerpo.token = authToken;
+  try {
+    const r = await fetch(GAS_URL, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(cuerpo) });
+    return revisarRespuesta(await r.json());
+  } catch (e) {
+    if (e instanceof TypeError && !soloPost) {
+      const r = await fetch(GAS_URL + '?' + new URLSearchParams(cuerpo).toString(), { redirect: 'follow' });
+      return revisarRespuesta(await r.json());
+    }
+    throw e;
+  }
 }
 
 // Arma la lista de contactos para el selector, filtrada por el detalle elegido y
@@ -160,7 +198,7 @@ function useDolarBlue() {
   return {tc,err,date};
 }
 
-function useAppData() {
+function useAppData(user) {
   const [price,  setPrice]  = useState(null);
   const [ops,    setOps]    = useState(GAS_URL ? [] : SEED_OPS); // SEED_OPS es sólo un placeholder para modo offline sin GAS
   const [source, setSource] = useState('loading');
@@ -185,7 +223,7 @@ function useAppData() {
       const d = await gasGet({ action: 'getData' });
       if (d?.ok) {
         if (d.lastPrice) { setPrice(d.lastPrice); setSource('sheets'); }
-        else             { setPrice(8000);         setSource('fallback'); }
+        else             { setPrice(null);         setSource('fallback'); } // sin dato real no se inventa un precio
         if (d.ops) setOps(d.ops); // confiamos en la respuesta del backend siempre, incluso si viene vacía
         if (d.stockUbicacion) setStockUbicacion(d.stockUbicacion);
         if (d.ventasPendientes) setVentasPendientes(d.ventasPendientes);
@@ -197,10 +235,11 @@ function useAppData() {
         setUltimoControlStock(d.ultimoControlStock ?? null);
         if (d.resumenCajas) setResumenCajas(d.resumenCajas);
       }
-    } catch { setPrice(8000); setSource('fallback'); }
+    } catch (e) { if (e?.delServidor) { /* sesión vencida u otro error del servidor: lo maneja revisarRespuesta */ } setSource('fallback'); }
   };
 
-  useEffect(() => { refresh(); }, []);
+  // Con servidor, los datos se piden recién cuando hay sesión (antes se pedían ya en la pantalla de login).
+  useEffect(() => { if (!GAS_URL || user) refresh(); }, [user]);
 
   const addOp = async (op) => {
     const next = [op, ...ops].slice(0, 20);
@@ -230,20 +269,6 @@ function useStockControl(backendControl) {
 async function getPin(uid){try{return localStorage.getItem(`pin_${uid}`)||'1234';}catch{return'1234';}}
 async function savePin(uid,pin){try{localStorage.setItem(`pin_${uid}`,pin);return true;}catch{return false;}}
 
-// ── CONTEXTO IA ──────────────────────────────────────────────────────────
-function buildCtx(tc, price, productos) {
-  const total=productos.reduce((s,p)=>s+totalStock(p),0);
-  const ars=price?total*price:null; const usd=ars&&tc?Math.round(ars/tc):null;
-  const stockLine=productos.map(p=>`${p.label}:${totalStock(p)||'agotado'}`).join(' | ');
-  const ubicLine=productos.filter(p=>totalStock(p)>0).map(p=>`${p.label} [${UBICACIONES.filter(u=>p.stockUbic[u]>0).map(u=>`${u}:${p.stockUbic[u]}`).join(', ')}]`).join(' | ');
-  return `Sos el asistente de Novato, bodega boutique de Mendoza. Datos al ${new Date().toLocaleDateString('es-AR')}.
-STOCK: ${stockLine}. Total:${total} bot. Precio ref.:$${price||'N/A'}/bot. Valorización:${ars?'ARS $'+ars.toLocaleString('es-AR'):'—'}${usd?' ≈ USD '+usd.toLocaleString('es-AR'):''}.  TC blue:${tc?'$'+tc.toLocaleString('es-AR')+'/USD':'N/A'}.
-STOCK POR DEPÓSITO: ${ubicLine||'sin datos'}.
-CLIENTES ACTIVOS: Organyca (última 04/03/2026, en cierre). INACTIVOS: Angela San Rafael, Carlos De Aquín, Bahia Blanca, Rosario, Gahvino (perdido 2023, distribuidor BA), Mercadito Chacras (vinoteca, 23 op, inactivo desde 2023).
-FINANZAS: Cajas socios ~$0 ARS | Empresa ≈ USD 275. CONTEXTO: 4 socios, sin clientes activos, relanzamiento comercial en enero con vuelta de Mati. Uva Valle de Uco, elaboración Otero Ramos.
-Respondé directo y útil. Abreviaciones: $, ARS, USD, bot, op.`;
-}
-
 // ── UI BASE ──────────────────────────────────────────────────────────────
 const F=({label,children})=>(<div style={{display:'flex',flexDirection:'column',gap:6}}>{label&&<label style={{fontSize:11,color:C.muted,letterSpacing:'0.1em',textTransform:'uppercase',fontFamily:'system-ui'}}>{label}</label>}{children}</div>);
 const iS={background:C.cork,border:`1px solid ${C.border}`,borderRadius:10,padding:'12px 14px',color:C.text,fontSize:15,fontFamily:'system-ui',outline:'none',width:'100%',boxSizing:'border-box'};
@@ -256,7 +281,32 @@ const SL=({children})=><div style={{fontSize:10,color:C.dim,letterSpacing:'0.15e
 // ── LOGIN ────────────────────────────────────────────────────────────────
 function LoginScreen({onLogin}){
   const [step,setStep]=useState('users');const [pending,setPending]=useState(null);const [pin,setPin]=useState('');const [shake,setShake]=useState(false);const [hov,setHov]=useState(null);
-  const tryPin=async()=>{const s=await getPin(pending.id);if(pin===s){onLogin(pending);}else{setShake(true);setPin('');setTimeout(()=>setShake(false),500);}};
+  const [checking,setChecking]=useState(false);const [msg,setMsg]=useState('');
+  const fallar=(m)=>{setMsg(m||'PIN incorrecto');setShake(true);setPin('');setTimeout(()=>setShake(false),500);};
+  // El PIN se valida en el servidor y éste devuelve un token de sesión. Si el servidor todavía no
+  // tiene la autenticación configurada (AUTH_NOT_CONFIGURED) se usa el PIN local de antes.
+  const tryPin=async()=>{
+    if(checking) return;
+    setChecking(true);setMsg('');
+    try{
+      if(GAS_URL){
+        let r;
+        try{ r=await gasPost({action:'login',userId:pending.id,pin},{soloPost:true}); }
+        catch(e){ r={ok:false,code:'RED'}; }
+        if(r?.ok){ onLogin(pending,r.token); return; }
+        if(r?.code==='AUTH_NOT_CONFIGURED'){
+          const s=await getPin(pending.id);
+          if(pin===s){ onLogin(pending,''); return; }
+          fallar(); return;
+        }
+        if(r?.code==='RED'){ fallar('Sin conexión con el servidor. Probá de nuevo.'); return; }
+        fallar((r?.mensaje||'PIN incorrecto')+(r?.restantes!=null&&r.restantes<=2?` (te quedan ${r.restantes})`:''));
+      } else {
+        const s=await getPin(pending.id);
+        if(pin===s) onLogin(pending,''); else fallar();
+      }
+    } finally { setChecking(false); }
+  };
   useEffect(()=>{if(pin.length===4)tryPin();},[pin]);
   // Teclado físico (compu): sin un input oculto, para que el teléfono no abra su propio
   // teclado encima del teclado numérico de la app.
@@ -281,7 +331,7 @@ function LoginScreen({onLogin}){
           <button key={i} onClick={()=>{if(k==='⌫')setPin(p=>p.slice(0,-1));else if(k)setPin(p=>p.length<4?p+k:p);}} style={{height:64,background:k?C.barrel:C.cellar,border:`1px solid ${k?C.border:'transparent'}`,borderRadius:12,color:C.text,fontSize:22,fontFamily:'Georgia, serif',cursor:k?'pointer':'default',opacity:k?1:0}}>{k}</button>
         ))}
       </div>
-      <div style={{color:C.dim,fontSize:11,fontFamily:'system-ui',marginTop:28}}>PIN inicial: 1234</div>
+      <div style={{color:msg&&!checking?'#f08080':C.muted,fontSize:13,fontFamily:'system-ui',marginTop:28,minHeight:18,textAlign:'center'}}>{checking?'Verificando…':msg}</div>
       <style>{`@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}`}</style>
     </div>
   );
@@ -303,8 +353,25 @@ function LoginScreen({onLogin}){
 
 // ── SETTINGS ─────────────────────────────────────────────────────────────
 function SettingsPanel({user,onClose,onLogout,showToast}){
-  const [step,setStep]=useState('menu');const [np,setNp]=useState('');const [cp,setCp]=useState('');const [saving,setSaving]=useState(false);
-  const changePin=async()=>{if(np.length!==4){showToast('El PIN debe ser de 4 dígitos','error');return;}if(np!==cp){showToast('Los PINs no coinciden','error');return;}setSaving(true);const ok=await savePin(user.id,np);setSaving(false);if(ok){showToast('✓ PIN actualizado');setStep('menu');setNp('');setCp('');}else showToast('Error al guardar','error');};
+  const [step,setStep]=useState('menu');const [op,setOp]=useState('');const [np,setNp]=useState('');const [cp,setCp]=useState('');const [saving,setSaving]=useState(false);
+  const conServidor=!!authToken; // con sesión del servidor, el PIN se cambia en el servidor (y vale en todos tus dispositivos)
+  const changePin=async()=>{
+    if(conServidor&&op.length!==4){showToast('Ingresá tu PIN actual','error');return;}
+    if(np.length!==4){showToast('El PIN debe ser de 4 dígitos','error');return;}
+    if(np!==cp){showToast('Los PINs no coinciden','error');return;}
+    setSaving(true);
+    try{
+      if(conServidor){
+        const r=await gasPost({action:'changePin',pinActual:op,pinNuevo:np},{soloPost:true});
+        if(!r?.ok){showToast(r?.mensaje||'No se pudo cambiar el PIN','error');setSaving(false);return;}
+      } else {
+        const ok=await savePin(user.id,np);
+        if(!ok){showToast('Error al guardar','error');setSaving(false);return;}
+      }
+      showToast('✓ PIN actualizado');setStep('menu');setOp('');setNp('');setCp('');
+    }catch(e){ showToast(textoError(e,'Error de conexión. Intentá de nuevo.'),'error'); }
+    setSaving(false);
+  };
   return(<>
     <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',zIndex:300}}/>
     <div style={{position:'fixed',bottom:0,left:0,right:0,background:C.barrel,border:`1px solid ${C.border}`,borderRadius:'20px 20px 0 0',padding:'8px 20px 40px',zIndex:301}}>
@@ -319,6 +386,7 @@ function SettingsPanel({user,onClose,onLogout,showToast}){
       </div>):(<div style={{display:'flex',flexDirection:'column',gap:14}}>
         <button onClick={()=>setStep('menu')} style={{background:'none',border:'none',color:C.muted,cursor:'pointer',fontSize:14,fontFamily:'system-ui',textAlign:'left',marginBottom:4}}>← Volver</button>
         <SL>Cambiar PIN</SL>
+        {conServidor&&<F label="PIN actual"><Inp type="password" inputMode="numeric" pattern="[0-9]*" maxLength={4} placeholder="••••" value={op} onChange={e=>setOp(e.target.value.replace(/\D/g,'').slice(0,4))}/></F>}
         <F label="Nuevo PIN (4 dígitos)"><Inp type="password" inputMode="numeric" pattern="[0-9]*" maxLength={4} placeholder="••••" value={np} onChange={e=>setNp(e.target.value.replace(/\D/g,'').slice(0,4))}/></F>
         <F label="Confirmar PIN"><Inp type="password" inputMode="numeric" pattern="[0-9]*" maxLength={4} placeholder="••••" value={cp} onChange={e=>setCp(e.target.value.replace(/\D/g,'').slice(0,4))}/></F>
         <Btn onClick={changePin} style={{opacity:saving?0.6:1}}>{saving?'Guardando…':'Guardar PIN'}</Btn>
@@ -368,14 +436,14 @@ function StockControlBody({productos,showToast,onBack,last,save,user,refresh}){
     try{
       if(GAS_URL){
         const items=diffs.map(d=>({label:d.label,stock:d.stock,real:d.real,diff:d.diff}));
-        await gasGet({action:'addStockControl',deposito,fecha:ctrl.fecha,hora:ctrl.hora,items:JSON.stringify(items),user:user.nombre});
+        await gasPost({action:'addStockControl',deposito,items:JSON.stringify(items)}); // fecha, hora y teórico los fija el servidor
         await refresh();
       }
       await save(ctrl);
       if(hasDiff){showToast(`⚠ Control de ${deposito} guardado${GAS_URL?' en Sheets':''} — diferencias en ${diffs.filter(d=>d.diff!==0).length} producto(s)`,'error');}
       else{showToast(`✓ ${deposito}: stock coincide con lo teórico${GAS_URL?' (guardado en Sheets)':''}`,'ok');}
       onBack();
-    }catch(e){ showToast('Error al guardar el control. Intentá de nuevo.','error'); }
+    }catch(e){ showToast(textoError(e,'Error al guardar el control. Intentá de nuevo.'),'error'); }
     setSending(false);
   };
   return(<>
@@ -435,14 +503,14 @@ function TransferForm({productos,applyTransfer,user,showToast,onBack,refresh}){
     if(disponible!==null&&cant>disponible){showToast(`Sólo hay ${disponible} bot en ${f.desde}`,'error');return;}
     setSending(true);
     try{
+      // El stock local se mueve recién cuando el servidor aceptó el movimiento: si falla (por ejemplo
+      // por falta de stock real), el celular no queda mostrando un stock que no existe.
+      if(GAS_URL) await gasPost({action:'addTransfer',fecha:f.fecha,producto:prod?.label,cantidad:cant,desde:f.desde,hacia:f.hacia,notas:f.notas||''});
       applyTransfer({productoId:f.producto,desde:f.desde,hacia:f.hacia,cantidad:cant});
-      if(GAS_URL){
-        await gasGet({action:'addTransfer',fecha:f.fecha,producto:prod?.label,cantidad:cant,desde:f.desde,hacia:f.hacia,notas:f.notas||'',user:user.nombre});
-        await refresh();
-      }
+      if(GAS_URL) await refresh();
       showToast(`✓ ${cant} bot de ${prod?.label}: ${f.desde} → ${f.hacia}${GAS_URL?' (enviado a Sheets)':''}`,'ok');
       onBack();
-    }catch(e){ showToast('Error al registrar el movimiento.','error'); }
+    }catch(e){ showToast(textoError(e,'Error al registrar el movimiento.'),'error'); }
     setSending(false);
   };
   return(
@@ -483,7 +551,7 @@ function DashboardScreen({onNavigate,price,source,productos,last,operacionesPend
   return(
     <div style={{padding:'20px 16px',maxWidth:540,margin:'0 auto'}}>
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:12}}>
-        {[{v:total.toLocaleString('es-AR'),u:'botellas',l:'Stock total'},{v:usd?`USD ${usd.toLocaleString('es-AR')}`:'…',u:'valorización',l:price?`$${price.toLocaleString('es-AR')}/bot`:'cargando…'}].map(k=><Card key={k.l} style={{padding:'12px 10px'}}><div style={{color:C.gold,fontSize:17,fontWeight:700,lineHeight:1,fontFamily:'Georgia, serif'}}>{k.v}</div><div style={{color:C.dim,fontSize:10,fontFamily:'system-ui',marginTop:2}}>{k.u}</div><div style={{color:C.muted,fontSize:10,fontFamily:'system-ui',marginTop:5,borderTop:`1px solid ${C.border}`,paddingTop:5}}>{k.l}</div></Card>)}
+        {[{v:total.toLocaleString('es-AR'),u:'botellas',l:'Stock total'},{v:usd?`USD ${usd.toLocaleString('es-AR')}`:'…',u:'valorización',l:price?`$${price.toLocaleString('es-AR')}/bot`:(source==='loading'?'cargando…':'sin precio')}].map(k=><Card key={k.l} style={{padding:'12px 10px'}}><div style={{color:C.gold,fontSize:17,fontWeight:700,lineHeight:1,fontFamily:'Georgia, serif'}}>{k.v}</div><div style={{color:C.dim,fontSize:10,fontFamily:'system-ui',marginTop:2}}>{k.u}</div><div style={{color:C.muted,fontSize:10,fontFamily:'system-ui',marginTop:5,borderTop:`1px solid ${C.border}`,paddingTop:5}}>{k.l}</div></Card>)}
         <Card style={{padding:'12px 10px'}}>
           <div style={{color:C.gold,fontSize:14,fontWeight:700,lineHeight:1.3,fontFamily:'Georgia, serif'}}>${totalCajaArs.toLocaleString('es-AR')}</div>
           <div style={{color:C.gold,fontSize:12,fontWeight:700,lineHeight:1.3,fontFamily:'Georgia, serif',opacity:0.8}}>USD {totalCajaUsd.toLocaleString('es-AR')}</div>
@@ -497,7 +565,7 @@ function DashboardScreen({onNavigate,price,source,productos,last,operacionesPend
         </div>
         <div style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',background:C.barrel,border:`1px solid ${C.border}`,borderRadius:10}}>
           <div style={{width:7,height:7,borderRadius:'50%',background:source==='sheets'?C.green:C.goldDim,flexShrink:0}}/>
-          <span style={{fontSize:12,fontFamily:'system-ui',color:C.muted}}>Precio ref.: <strong style={{color:C.text}}>{price?`$${price.toLocaleString('es-AR')}/bot`:'cargando…'}</strong><span style={{color:source==='sheets'?C.green:C.goldDim}}>{source==='sheets'?' · Google Sheets':' · último dato manual'}</span></span>
+          <span style={{fontSize:12,fontFamily:'system-ui',color:C.muted}}>Precio ref.: <strong style={{color:C.text}}>{price?`$${price.toLocaleString('es-AR')}/bot`:(source==='loading'?'cargando…':'sin dato')}</strong><span style={{color:source==='sheets'?C.green:C.goldDim}}>{source==='sheets'?' · Google Sheets':(source==='fallback'?' · sin conexión con la planilla':' · modo local')}</span></span>
         </div>
       </div>
       <SL>Stock por producto</SL>
@@ -770,7 +838,7 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
         return {producto:prod?.label||'',deposito:l.deposito,botellas:parseInt(l.botellas)||0,monto:l.monto||0};
       });
       if(GAS_URL){
-        const r=await gasGet({action:'addTransaccion',fecha:f.fecha,detalle:f.detalle,contacto:ct,canal:esVenta?(f.canal||''):'',lineas:JSON.stringify(lineasEnvio),user:user.nombre});
+        const r=await gasPost({action:'addTransaccion',fecha:f.fecha,detalle:f.detalle,contacto:ct,canal:esVenta?(f.canal||''):'',lineas:JSON.stringify(lineasEnvio)});
         referencia=r?.referencia||'';
       }
       f.lineas.forEach(l=>{
@@ -782,7 +850,7 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
       if(GAS_URL) await refresh();
       showToast(`✓ ${f.detalle} registrada en BALANCE${referencia?' ('+referencia+')':''}`,'ok');
       onBack();
-    } catch(e){ showToast('Error al registrar. Intentá de nuevo.','error'); }
+    } catch(e){ showToast(textoError(e,'Error al registrar. Intentá de nuevo.'),'error'); }
     setSending(false);
   };
   return(
@@ -869,16 +937,17 @@ function CajaScreen({user,onBack,showToast,addOp,ventasPendientes,comprasPendien
   const listaContactos = contactosParaDetalle(contactosBalance, clientes, f.detalle);
   const submit=async()=>{
     if(!f.monto||!f.detalle||!f.contacto||(f.contacto==='Nuevo…'&&!f.contactoNuevo)){showToast('Completá los campos obligatorios','error');return;}
+    if(!(parseFloat(f.monto)>0)){showToast('El monto tiene que ser mayor a cero (cobro o gasto define el signo)','error');return;}
     const ct=f.contacto==='Nuevo…'?f.contactoNuevo:f.contacto;
     setSending(true);
     try {
-      if(GAS_URL) await gasGet({action:'addMovement',fecha:f.fecha,tipo:f.tipo,monto:f.monto,caja:f.caja,detalle:f.detalle,contacto:ct,referencia:f.referencia||'',user:user.nombre});
+      if(GAS_URL) await gasPost({action:'addMovement',fecha:f.fecha,tipo:f.tipo,monto:f.monto,caja:f.caja,detalle:f.detalle,contacto:ct,referencia:f.referencia||''});
       const icon=f.tipo==='cobro'?'💵':'💸';
-      await addOp({id:Date.now(),icon,desc:`${f.detalle}: ${ct}`,monto:`$${parseInt(f.monto).toLocaleString('es-AR')}`,fecha:new Date(f.fecha+'T12:00').toLocaleDateString('es-AR'),user:user.nombre});
+      await addOp({id:Date.now(),icon,desc:`${f.detalle}: ${ct}`,monto:`$${Math.round(parseFloat(f.monto)).toLocaleString('es-AR')}`,fecha:new Date(f.fecha+'T12:00').toLocaleDateString('es-AR'),user:user.nombre});
       if(GAS_URL) await refresh();
       showToast(`✓ Movimiento registrado${GAS_URL?' en CAJA':''}`,'ok');
       onBack();
-    } catch(e){ showToast('Error al registrar. Intentá de nuevo.','error'); }
+    } catch(e){ showToast(textoError(e,'Error al registrar. Intentá de nuevo.'),'error'); }
     setSending(false);
   };
   return(
@@ -1083,10 +1152,11 @@ function DatosScreen({price,productos}){
   const [escalaVentas,setEscalaVentas]=useState('mes'); // mes | anio
   useEffect(()=>{(async()=>{
     if(!GAS_URL){setData({insumos:[],existe:false});setAn({});return;}
-    try{ setData(await gasGet({action:'getInsumos'})); }
-    catch(e){ setData({insumos:[],existe:false,error:true}); }
-    try{ setAn(await gasGet({action:'getAnalytics'})); }
-    catch(e){ setAn({}); }
+    // Las dos consultas salen juntas: antes la segunda esperaba a que terminara la primera.
+    await Promise.all([
+      gasGet({action:'getInsumos'}).then(setData).catch(()=>setData({insumos:[],existe:false,error:true})),
+      gasGet({action:'getAnalytics'}).then(setAn).catch(()=>setAn({})),
+    ]);
   })();},[]);
 
   const totalArs=data?.totalArs||0;
@@ -1305,50 +1375,6 @@ function DatosScreen({price,productos}){
   );
 }
 
-// ── CONSULTAS IA ─────────────────────────────────────────────────────────
-function ConsultasScreen({price,productos}){
-  const {tc}=useDolarBlue();
-  const [msgs,setMsgs]=useState([{role:'assistant',content:'Hola 👋 Soy el asistente de Novato. Preguntame sobre stock, clientes, caja o cualquier dato de la bodega.'}]);
-  const [input,setInput]=useState('');const [loading,setL]=useState(false);const ref=useRef(null);
-  useEffect(()=>ref.current?.scrollIntoView({behavior:'smooth'}),[msgs,loading]);
-  const QUICK=['¿Cuánto stock tenemos disponible?','¿Cuánto vale el stock en dólares?','¿Qué clientes están inactivos?','Resumime el estado de la bodega'];
-  const send=async(text)=>{
-    const q=(text||input).trim();if(!q||loading)return;setInput('');
-    const next=[...msgs,{role:'user',content:q}];setMsgs(next);setL(true);
-    try{
-      const res=await fetch('https://api.anthropic.com/v1/messages',{
-        method:'POST',
-        headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-        body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1000,system:buildCtx(tc,price,productos),messages:next.slice(1)})
-      });
-      const d=await res.json();
-      if(d?.content?.[0]?.text){
-        setMsgs(p=>[...p,{role:'assistant',content:d.content[0].text}]);
-      } else {
-        const errMsg=d?.error?.message||d?.message||JSON.stringify(d);
-        setMsgs(p=>[...p,{role:'assistant',content:'Error: '+errMsg}]);
-      }
-    }
-    catch{setMsgs(p=>[...p,{role:'assistant',content:'Error de conexión.'}]);}
-    setL(false);
-  };
-  return(
-    <div style={{display:'flex',flexDirection:'column',height:'calc(100vh - 130px)'}}>
-      <div style={{flex:1,overflowY:'auto',padding:'16px 16px 0'}}>
-        {msgs.length===1&&<div style={{marginBottom:20}}><SL>Preguntas frecuentes</SL><div style={{display:'flex',flexDirection:'column',gap:8}}>{QUICK.map(q=><button key={q} onClick={()=>send(q)} style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:10,padding:'11px 14px',color:C.muted,fontSize:13,fontFamily:'system-ui',textAlign:'left',cursor:'pointer'}}>{q}</button>)}</div></div>}
-        {msgs.map((m,i)=>(<div key={i} style={{marginBottom:14,display:'flex',justifyContent:m.role==='user'?'flex-end':'flex-start',alignItems:'flex-start',gap:8}}>{m.role==='assistant'&&<div style={{width:28,height:28,borderRadius:'50%',background:C.gold,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'#1E1914',flexShrink:0,marginTop:2}}>N</div>}<div style={{maxWidth:'78%',background:m.role==='user'?C.wine:C.barrel,border:m.role==='assistant'?`1px solid ${C.border}`:'none',borderRadius:m.role==='user'?'16px 4px 16px 16px':'4px 16px 16px 16px',padding:'11px 14px',fontSize:14,fontFamily:'system-ui',color:C.text,lineHeight:1.6,whiteSpace:'pre-wrap'}}>{m.content}</div></div>))}
-        {loading&&<div style={{display:'flex',gap:8,marginBottom:14}}><div style={{width:28,height:28,borderRadius:'50%',background:C.gold,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'#1E1914',flexShrink:0}}>N</div><div style={{background:C.barrel,border:`1px solid ${C.border}`,borderRadius:'4px 16px 16px 16px',padding:'14px 18px',display:'flex',gap:5,alignItems:'center'}}>{[0,1,2].map(d=><div key={d} style={{width:6,height:6,borderRadius:'50%',background:C.gold,animation:`dot 1.2s ${d*0.2}s infinite`}}/>)}</div></div>}
-        <div ref={ref}/>
-      </div>
-      <div style={{padding:'10px 16px 14px',borderTop:`1px solid ${C.border}`,background:C.barrel,display:'flex',gap:10,alignItems:'center'}}>
-        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}} placeholder="Preguntá sobre stock, clientes, caja…" style={{flex:1,background:C.cork,border:`1px solid ${C.border}`,borderRadius:24,padding:'12px 18px',color:C.text,fontSize:14,fontFamily:'system-ui',outline:'none'}}/>
-        <button onClick={()=>send()} disabled={loading||!input.trim()} style={{background:input.trim()&&!loading?C.gold:C.cork,border:'none',borderRadius:'50%',width:44,height:44,display:'flex',alignItems:'center',justifyContent:'center',cursor:input.trim()?'pointer':'default',fontSize:18,color:input.trim()?'#1E1914':C.dim,flexShrink:0}}>↑</button>
-      </div>
-      <style>{`@keyframes dot{0%,80%,100%{opacity:.3;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}`}</style>
-    </div>
-  );
-}
-
 // ── NAV ──────────────────────────────────────────────────────────────────
 function Nav({screen,setScreen}){
   const tabs=[{id:'dashboard',icon:'⌂',l:'Inicio'},{id:'venta',icon:'🍾',l:'Cargar'},{id:'caja',icon:'⇄',l:'Caja'},{id:'stock',icon:'📦',l:'Stock'},{id:'datos',icon:'◫',l:'Datos'}];
@@ -1358,17 +1384,28 @@ function Nav({screen,setScreen}){
 // ── APP ───────────────────────────────────────────────────────────────────
 export default function NovatoApp(){
   const [user,setUser]=useState(null);const [screen,setScreen]=useState('dashboard');const [toast,setToast]=useState(null);const [settings,setSettings]=useState(false);
-  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,comprasPendientes,operacionesPendientes,clientes,categorias,contactosBalance,ultimoControlStock,resumenCajas,refresh}=useAppData();
+  const {price,source,ops,addOp,stockUbicacion,ventasPendientes,comprasPendientes,operacionesPendientes,clientes,categorias,contactosBalance,ultimoControlStock,resumenCajas,refresh}=useAppData(user);
   const {productos,applyTransfer,applySale}=useProductos(stockUbicacion);
   const {last,save}=useStockControl(ultimoControlStock);
   const showToast=(msg,type='ok')=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
-  const logout=()=>{setUser(null);setSettings(false);setScreen('dashboard');};
-  if(!user)return <LoginScreen onLogin={u=>{setUser(u);setScreen('dashboard');}}/>;
+  const logout=()=>{authToken='';setUser(null);setSettings(false);setScreen('dashboard');};
+  // Si el servidor avisa que la sesión venció, se vuelve al login.
+  alVencerSesion=()=>{ setUser(null);setSettings(false);setScreen('dashboard');showToast('Tu sesión venció. Ingresá de nuevo.','error'); };
+  // Al volver a la app (de otra app o del bloqueo del celular) se actualizan los datos si pasó más de 1 minuto,
+  // para no operar con un stock viejo.
+  const ultimoRefresh=useRef(Date.now());
+  useEffect(()=>{
+    if(!user||!GAS_URL) return;
+    const alVolver=()=>{ if(document.visibilityState==='visible'&&Date.now()-ultimoRefresh.current>60000){ ultimoRefresh.current=Date.now(); refresh(); } };
+    document.addEventListener('visibilitychange',alVolver);
+    return ()=>document.removeEventListener('visibilitychange',alVolver);
+  },[user]);
+  if(!user)return <LoginScreen onLogin={(u,t)=>{authToken=t||'';ultimoRefresh.current=Date.now();setUser(u);setScreen('dashboard');}}/>;
   return(
     <div style={{fontFamily:'Georgia, serif',background:C.cellar,minHeight:'100vh',color:C.text}}>
       {toast&&<div style={{position:'fixed',top:16,left:'50%',transform:'translateX(-50%)',zIndex:999,whiteSpace:'nowrap',background:toast.type==='ok'?C.greenBg:C.wineBg,border:`1px solid ${toast.type==='ok'?C.green:C.wine}`,color:toast.type==='ok'?'#7dce9b':'#f08080',padding:'11px 22px',borderRadius:10,fontSize:13,fontFamily:'system-ui',boxShadow:'0 4px 20px rgba(0,0,0,0.5)'}}>{toast.msg}</div>}
       {settings&&<SettingsPanel user={user} onClose={()=>setSettings(false)} onLogout={logout} showToast={showToast}/>}
-      <div style={{background:C.barrel,borderBottom:`1px solid ${C.border}`,padding:'env(safe-area-inset-top, 13px) 18px 13px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
+      <div style={{background:C.barrel,borderBottom:`1px solid ${C.border}`,padding:'calc(env(safe-area-inset-top, 0px) + 13px) 18px 13px',display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:100}}>
         <div style={{display:'flex',alignItems:'center',gap:10}}><span style={{color:C.gold,fontWeight:700,letterSpacing:'0.25em',fontSize:15,fontFamily:'Georgia, serif'}}>NOVATO</span><span style={{color:C.border}}>|</span><span style={{color:C.dim,fontSize:12,fontFamily:'system-ui'}}>Gestión</span></div>
         <button onClick={()=>setSettings(true)} style={{display:'flex',alignItems:'center',gap:7,background:C.cork,border:`1px solid ${C.border}`,borderRadius:20,padding:'6px 13px',color:C.muted,fontSize:12,fontFamily:'system-ui',cursor:'pointer'}}><span>{user.emoji}</span><span>{user.nombre}</span><span style={{color:C.dim,fontSize:10}}>⚙</span></button>
       </div>
