@@ -1,2 +1,16 @@
+# Claude/clasp
 .clasp.json
 .clasprc.json
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+
+# Variables de entorno (la URL del backend va en Vercel, no en el repo)
+.env
+.env.*
+
+# Sistema
+.DS_Store
+*.log
