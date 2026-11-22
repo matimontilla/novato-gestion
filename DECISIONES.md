@@ -316,6 +316,59 @@ validaciones y reparto proporcional. No toca el Sheet. La Action `ci.yml` corre 
 pruebas, revisa la sintaxis de los `.gs` y compila la app en cada pull request y push
 (un `.gs` con error de sintaxis desplegaría un backend roto porque `clasp push` reemplaza todo).
 
+### Carga rápida con IA (desde noviembre 2026)
+
+En la pantalla **Cargar** hay un cuadro donde se escribe (o se dicta) una frase, por ejemplo
+"vendí 12 Malbec 2022 a Organyca a 9000 cada una", y la app completa el formulario.
+Código: `apps-script/asistente.gs` (acción `interpretarCarga`) y `CargaRapida` en `src/App.jsx`.
+
+**Principios que no se tocan:**
+- **Sólo propone, nunca escribe.** El servidor devuelve un *borrador*; el usuario lo revisa en
+  el formulario de siempre y recién al apretar "Registrar" pasa por los endpoints normales
+  (con toda su validación de stock, candado y duplicados). La IA no tiene acceso de escritura.
+- **Todo lo que devuelve el modelo se valida contra listas conocidas** (productos, depósitos,
+  cajas, categorías, canales). Lo que no existe se vacía y se avisa. Los montos
+  (precio × cantidad) los calcula el código, no el modelo.
+- **Privacidad:** a la API sólo viajan la frase, la fecha de hoy y los *nombres* del catálogo
+  (clientes, productos, depósitos). Nunca saldos, montos de la planilla ni PINs.
+- **Requiere sesión del servidor** (haber entrado con el PIN del servidor). Sin sesión no corre.
+
+**Configuración (Script Properties de Apps Script, nunca en el repo):**
+- `ANTHROPIC_API_KEY`: clave de la API de Anthropic (cuenta con crédito cargado). Si falta, la
+  función se apaga sola y la app muestra "todavía no está activada"; el resto sigue igual.
+- `CLAUDE_MODEL`: opcional. Por defecto `claude-haiku-5-5`.
+
+**Topes:** 500 caracteres por frase, 30 frases por usuario por hora, 300 por día entre todos
+(constantes al inicio de `asistente.gs`). Es el tope de gasto si alguien abusa.
+
+**Costo:** el modelo por defecto cuesta US$0,10 por millón de tokens de entrada y US$0,50 por
+millón de salida (precio verificado en la documentación de Anthropic al diseñarlo; confirmar
+en la página de precios antes de apoyarse en el número). Con ~1.500 tokens de entrada y ~200
+de salida por frase (estimación, no medida), cada uso cuesta del orden de una fracción de
+centavo. El tope diario de 300 frases acota el peor caso.
+
+**Voz:** si el navegador lo permite (Web Speech API, es-AR) aparece un botón de micrófono; si
+no, el micrófono del teclado del celular dicta en el mismo cuadro. El audio no pasa por el
+servidor de Novato.
+
+**Sin verificar contra el sistema real al escribir esto:** la respuesta de la API de Anthropic
+y el comportamiento sobre la planilla real; las pruebas usan servicios simulados. Probar con
+frases reales después del primer deploy (ventas, cobros y movimientos de stock).
+
+### App instalable (PWA)
+
+La app se puede "Agregar a pantalla de inicio" y abre como app (sin barra del navegador).
+Archivos: `public/manifest.webmanifest`, `public/sw.js`, `public/icons/` y el registro en
+`src/main.jsx` (sólo en producción). Es un commit separado: para sacarla basta revertirlo.
+- **No guarda datos del negocio.** El service worker sólo guarda la carcasa (la página y los
+  archivos con hash). Las llamadas a Apps Script y a otros dominios van siempre a la red.
+  Sin conexión no hay datos ni operaciones: es a propósito, para no operar con stock viejo.
+- Costo: ninguno (se sirve desde Vercel como el resto).
+- En iPhone se instala desde Safari ("Compartir" → "Agregar a inicio"); en Android, desde
+  Chrome ("Instalar aplicación"). Los íconos son una "N" dorada generada para esta app.
+- Al publicar una versión nueva, las páginas se piden primero a la red, así que se ve la
+  actualización sin borrar nada. Si cambia la lógica del service worker, subir `CACHE`.
+
 ### Deploy: automático desde GitHub (desde octubre 2026)
 
 Cada push a `main` que toca `apps-script/` dispara la GitHub Action
@@ -425,6 +478,11 @@ Opus 5, y negó la existencia de Opus 5 hasta que una búsqueda lo desmintió.
 ### Convenciones de la app
 
 - Estética: fondo casi negro, acentos dorados (etiqueta Novato), tipografía Georgia serif
+  para cifras y títulos, system-ui para el resto
+- Rediseño (nov 2026): navegación inferior con "Cargar" como botón central; íconos SVG propios
+  en lugar de emojis; avatares con la inicial; texto mínimo de 12 px (11 px en gráficos);
+  controles de al menos 44 px; contraste de `dim`/`muted` subido para leerse a la luz del día;
+  opciones cortas (tipo de operación, cliente, depósito) como chips en vez de selects
 - Comunicación del proyecto en español
 - Productos con stock 0 se ocultan de los selectores
 - Signos: cobro positivo, gasto negativo. Verde `+` / rojo `-`. Sobrepago se muestra
