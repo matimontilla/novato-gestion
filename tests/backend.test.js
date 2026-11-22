@@ -431,3 +431,26 @@ test('analíticas: Yuniku (elaboración por encargo) no entra en ventas por clie
   assert.equal(m.botellasVendidas, 60);
   assert.equal(r.flujoAnual.reduce((s, a) => s + a.ingresosArs, 0), 1400);
 });
+
+test('Otero Ramos: es un depósito válido, pero no se puede vender desde ahí', () => {
+  const b = cargarBackend();
+  assert.equal(b.run('depositoValido_("Otero Ramos")'), 'Otero Ramos');
+  b.ctx.SpreadsheetApp = { getActiveSpreadsheet: () => ({ getSheetByName: () => ({}) }) };
+  const lineas = JSON.stringify([{ producto: 'Blend 2023', deposito: 'Otero Ramos', botellas: 6, monto: 1000 }]);
+  assert.throws(() => b.run(`addTransaccion({fecha:"2026-11-22",detalle:"Venta",contacto:"Particular",lineas:${JSON.stringify(lineas)}})`), /Otero Ramos/);
+});
+
+test('Otero Ramos: el stock por depósito lee su columna de la tabla de STOCK', () => {
+  const b = cargarBackend();
+  const tabla = [
+    ['PRODUCTO', 'R PEÑA', 'PIPI', 'REZMA', 'LUCAS', 'MATI', 'OTERO RAMOS', 'TOTAL', 'DIFERENCIA'],
+    ['Blend 2023', 0, 0, 0, 0, 0, 3960, 3960, 0],
+    ['Malbec 2022', 2820, 39, 0, 6, 0, 0, 2865, -33],
+  ];
+  b.ctx.SpreadsheetApp = { getActiveSpreadsheet: () => ({ getSheetByName: () => ({ getRange: () => ({ getValues: () => tabla }) }) }) };
+  const r = JSON.parse(JSON.stringify(b.run('getStockUbicacion()')));
+  assert.equal(r['Blend 2023']['Otero Ramos'], 3960);
+  assert.equal(r['Blend 2023']['R Peña'], 0);
+  assert.equal(r['Malbec 2022']['Otero Ramos'], 0);
+  assert.equal(r['Malbec 2022']['Pipi'], 39);
+});

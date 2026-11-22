@@ -19,19 +19,25 @@ const USUARIOS = [
   { id:'santi',  nombre:'Santi',  rol:'Socio' },
 ];
 // Depósitos entre los que se puede mover stock sin que medie una venta
-const UBICACIONES = ['R Peña','Pipi','Lucas','Santi','Mati'];
+// Otero Ramos es quien elabora, fracciona y etiqueta: lo que hay ahí está en elaboración,
+// sin etiquetar, y todavía no se puede vender. Se cuenta aparte del stock disponible.
+const ELABORACION = 'Otero Ramos';
+const UBICACIONES = ['R Peña','Pipi','Lucas','Santi','Mati',ELABORACION];
+const DEPOSITOS_VENTA = UBICACIONES.filter(u=>u!==ELABORACION);
 const vacio = () => Object.fromEntries(UBICACIONES.map(u=>[u,0]));
 
 // Stock inicial por producto y depósito (según último conteo en General_Dinamico → hoja STOCK)
 const PRODUCTOS_SEED = [
   { id:'mb21', label:'Malbec 2021',     max:2964, hex:'#6B2030', stockUbic:{...vacio()} },
   { id:'mb22', label:'Malbec 2022',     max:3818, hex:'#9B2335', stockUbic:{...vacio(),'R Peña':2964,'Pipi':30,'Lucas':15} },
-  { id:'mb23', label:'Blend 2023',      max:3960, hex:'#C04050', stockUbic:{...vacio(),'R Peña':3960}, sinEtiquetar:'Otero Ramos' }, // estibado en botella sin etiquetar: no está a la venta ni en R Peña
+  { id:'mb23', label:'Blend 2023',      max:3960, hex:'#C04050', stockUbic:{...vacio(),[ELABORACION]:3960} },
   { id:'cf21', label:'Cab. Franc 2021', max:972,  hex:'#4A1528', stockUbic:{...vacio()} },
   { id:'cf22', label:'Cab. Franc 2022', max:2834, hex:'#7B2040', stockUbic:{...vacio(),'R Peña':894,'Pipi':18,'Lucas':15} },
   { id:'ch22', label:'Chardonnay 2022', max:2208, hex:'#C4A84F', stockUbic:{...vacio()} },
 ];
-const totalStock = p => UBICACIONES.reduce((s,u)=>s+(p.stockUbic[u]||0),0);
+const totalStock = p => DEPOSITOS_VENTA.reduce((s,u)=>s+(p.stockUbic[u]||0),0); // disponible para vender
+const totalEnElaboracion = p => p.stockUbic[ELABORACION]||0;
+const totalGeneral = p => totalStock(p)+totalEnElaboracion(p);
 
 // Maneja el stock por producto/depósito, persistido localmente y (si hay backend) enviado a Sheets
 function useProductos(backendStock) {
@@ -572,7 +578,7 @@ function TransferForm({productos,applyTransfer,user,showToast,onBack,refresh,bor
   };
   return(
     <div style={{display:'flex',flexDirection:'column',gap:16}}>
-      <F label="Producto *"><Sel value={f.producto} onChange={e=>set('producto',e.target.value)}><option value="">Seleccionar…</option>{productos.filter(p=>totalStock(p)>0).map(p=><option key={p.id} value={p.id}>{p.label} — {totalStock(p)} bot</option>)}</Sel></F>
+      <F label="Producto *"><Sel value={f.producto} onChange={e=>set('producto',e.target.value)}><option value="">Seleccionar…</option>{productos.filter(p=>totalGeneral(p)>0).map(p=><option key={p.id} value={p.id}>{p.label} — {totalGeneral(p)} bot</option>)}</Sel></F>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <F label="Desde *"><Sel value={f.desde} onChange={e=>set('desde',e.target.value)}><option value="">Seleccionar…</option>{UBICACIONES.map(u=><option key={u} value={u}>{u}{prod?` (${prod.stockUbic[u]||0})`:''}</option>)}</Sel></F>
         <F label="Hacia *"><Sel value={f.hacia} onChange={e=>set('hacia',e.target.value)}><option value="">Seleccionar…</option>{UBICACIONES.filter(u=>u!==f.desde).map(u=><option key={u} value={u}>{u}</option>)}</Sel></F>
@@ -587,7 +593,7 @@ function TransferForm({productos,applyTransfer,user,showToast,onBack,refresh,bor
 }
 
 // ── DASHBOARD ────────────────────────────────────────────────────────────
-function DashboardScreen({user,onNavigate,price,source,productos,sinEtiquetar=[],last,operacionesPendientes,resumenCajas}){
+function DashboardScreen({user,onNavigate,price,source,productos,last,operacionesPendientes,resumenCajas}){
   const {tc,err:tcErr}=useDolarBlue();
   // Detalle de una operación (se abre al tocar una operación pendiente)
   const [detalle,setDetalle]=useState(null);        // null=cerrado, {}=cargando, {...}=datos
@@ -602,6 +608,7 @@ function DashboardScreen({user,onNavigate,price,source,productos,sinEtiquetar=[]
     }catch(e){ setDetalle({error:true,referencia}); }
   };
   const total=productos.reduce((s,p)=>s+totalStock(p),0);
+  const enElaboracion=productos.filter(p=>totalEnElaboracion(p)>0);
   const productosOrdenados=[...productos].filter(p=>totalStock(p)>0).sort((a,b)=>totalStock(b)-totalStock(a)); // solo con stock, mayor a menor
   const ars=price?total*price:null; const usd=ars&&tc?Math.round(ars/tc):null;
   const totalCajaArs=Math.round(resumenCajas?.reduce((s,c)=>s+c.ars,0)||0);
@@ -759,16 +766,16 @@ function DashboardScreen({user,onNavigate,price,source,productos,sinEtiquetar=[]
               </div>
               <div style={{height:8,borderRadius:4,background:C.cork,overflow:'hidden'}}><div style={{width:`${Math.max(pct*100,2)}%`,height:'100%',background:p.hex,transition:'width 0.8s cubic-bezier(.4,0,.2,1)'}}/></div>
               <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-                {UBICACIONES.filter(u=>(p.stockUbic[u]||0)>0).map(u=><span key={u} style={{fontSize:13,color:C.muted,background:C.cork,borderRadius:8,padding:'3px 10px'}}>{u} <strong style={{color:C.text}}>{p.stockUbic[u].toLocaleString('es-AR')}</strong></span>)}
+                {DEPOSITOS_VENTA.filter(u=>(p.stockUbic[u]||0)>0).map(u=><span key={u} style={{fontSize:13,color:C.muted,background:C.cork,borderRadius:8,padding:'3px 10px'}}>{u} <strong style={{color:C.text}}>{p.stockUbic[u].toLocaleString('es-AR')}</strong></span>)}
               </div>
             </div>
           );
         })}
-        {productosOrdenados.length===0&&<div style={{color:C.dim,fontSize:14,fontFamily:'system-ui',textAlign:'center'}}>Sin stock disponible</div>}
-        {sinEtiquetar.map(p=>(
+        {productosOrdenados.length===0&&enElaboracion.length===0&&<div style={{color:C.dim,fontSize:14,fontFamily:'system-ui',textAlign:'center'}}>Sin stock disponible</div>}
+        {enElaboracion.map(p=>(
           <div key={p.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,fontFamily:'system-ui',fontSize:13,color:C.muted,borderTop:`1px solid ${C.border}`,paddingTop:12}}>
-            <span style={{display:'flex',alignItems:'center',gap:8}}><span style={{width:10,height:10,borderRadius:3,background:p.hex}}/>{p.label} · sin etiquetar ({p.sinEtiquetar}), no disponible para la venta</span>
-            <strong style={{fontFamily:'Georgia, serif',fontSize:15,color:C.text}}>{totalStock(p).toLocaleString('es-AR')}</strong>
+            <span style={{display:'flex',alignItems:'center',gap:8}}><span style={{width:10,height:10,borderRadius:3,background:p.hex}}/>{p.label} · en {ELABORACION} (elaboración, sin etiquetar), no disponible para la venta</span>
+            <strong style={{fontFamily:'Georgia, serif',fontSize:15,color:C.text}}>{totalEnElaboracion(p).toLocaleString('es-AR')}</strong>
           </div>
         ))}
       </section>
@@ -930,7 +937,7 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
     // Al elegir producto: si sólo hay un depósito con stock, queda elegido solo.
     if(campo==='producto'){
       const prod=productos.find(x=>x.id===valor);
-      const con=prod?UBICACIONES.filter(u=>(prod.stockUbic[u]||0)>0):[];
+      const con=prod?DEPOSITOS_VENTA.filter(u=>(prod.stockUbic[u]||0)>0):[];
       lineas[idx].deposito=con.length===1?con[0]:'';
     }
     return{...p,lineas};
@@ -1072,7 +1079,7 @@ function VentaScreen({user,onBack,showToast,addOp,price,productos,applySale,clie
                 <Etiqueta>Sale del depósito</Etiqueta>
                 {!prod&&<span style={{fontSize:13,color:C.dim,fontFamily:'system-ui'}}>Elegí primero el producto.</span>}
                 {prod&&<div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-                  {UBICACIONES.filter(u=>(prod.stockUbic[u]||0)>0).map(u=><Chip key={u} cuadrado activo={l.deposito===u} onClick={()=>setLinea(idx,'deposito',u)}>{u} · {prod.stockUbic[u].toLocaleString('es-AR')}</Chip>)}
+                  {DEPOSITOS_VENTA.filter(u=>(prod.stockUbic[u]||0)>0).map(u=><Chip key={u} cuadrado activo={l.deposito===u} onClick={()=>setLinea(idx,'deposito',u)}>{u} · {prod.stockUbic[u].toLocaleString('es-AR')}</Chip>)}
                 </div>}
               </div>
               <div style={{display:'flex',flexDirection:'column',gap:6}}>
@@ -1617,9 +1624,7 @@ function Nav({screen,setScreen}){
 export default function NovatoApp(){
   const [user,setUser]=useState(null);const [screen,setScreen]=useState('dashboard');const [borrador,setBorrador]=useState(null);const [vistaStock,setVistaStock]=useState(null);const [toast,setToast]=useState(null);const [settings,setSettings]=useState(false);
   const {price,source,ops,addOp,stockUbicacion,ventasPendientes,comprasPendientes,operacionesPendientes,clientes,categorias,contactosBalance,ultimoControlStock,ultimosControles,resumenCajas,refresh}=useAppData(user);
-  const {productos:todosProductos,applyTransfer,applySale}=useProductos(stockUbicacion);
-  const productos=todosProductos.filter(p=>!p.sinEtiquetar); // lo que se puede vender, mover y contar
-  const sinEtiquetar=todosProductos.filter(p=>p.sinEtiquetar);
+  const {productos,applyTransfer,applySale}=useProductos(stockUbicacion);
   const {last,save}=useStockControl(ultimoControlStock);
   const showToast=(msg,type='ok')=>{setToast({msg,type});setTimeout(()=>setToast(null),3500);};
   // Navegación: ir a una pantalla limpia, o llegar con un borrador de la carga rápida ya cargado.
@@ -1653,11 +1658,11 @@ export default function NovatoApp(){
         <button onClick={()=>setSettings(true)} aria-label="Cuenta y ajustes" style={{display:'flex',alignItems:'center',gap:8,minHeight:44,background:C.cork,border:`1px solid ${C.border}`,borderRadius:22,padding:'4px 14px 4px 5px',color:C.text,fontSize:14,fontFamily:'system-ui',cursor:'pointer'}}><Avatar u={user} s={34}/><span>{user.nombre}</span><Ico n="ajustes" s={16} c={C.dim}/></button>
       </div>
       <main style={{paddingBottom:'calc(96px + env(safe-area-inset-bottom, 0px))'}}>
-        {screen==='dashboard'&&<DashboardScreen user={user} onNavigate={irA} price={price} source={source} productos={productos} sinEtiquetar={sinEtiquetar} last={last} operacionesPendientes={operacionesPendientes} resumenCajas={resumenCajas}/>}
+        {screen==='dashboard'&&<DashboardScreen user={user} onNavigate={irA} price={price} source={source} productos={productos} last={last} operacionesPendientes={operacionesPendientes} resumenCajas={resumenCajas}/>}
         {screen==='venta'&&<VentaScreen user={user} onBack={()=>irA('dashboard')} showToast={showToast} addOp={addOp} price={price} productos={productos} applySale={applySale} clientes={clientes} categorias={categorias} contactosBalance={contactosBalance} refresh={refresh} onIrA={irConBorrador}/>}
         {screen==='caja'&&<CajaScreen user={user} onBack={()=>irA('dashboard')} showToast={showToast} addOp={addOp} ventasPendientes={ventasPendientes} comprasPendientes={comprasPendientes} refresh={refresh} resumenCajas={resumenCajas} categorias={categorias} contactosBalance={contactosBalance} clientes={clientes} borrador={borrador}/>}
         {screen==='stock'&&<StockScreen onBack={()=>irA('dashboard')} showToast={showToast} productos={productos} applyTransfer={applyTransfer} user={user} refresh={refresh} last={last} save={save} vistaInicial={vistaStock} borrador={borrador} ultimosControles={ultimosControles}/>}
-        {screen==='datos'&&<DatosScreen price={price} productos={todosProductos}/>}
+        {screen==='datos'&&<DatosScreen price={price} productos={productos}/>}
       </main>
       <Nav screen={screen} setScreen={irA}/>
     </div>
