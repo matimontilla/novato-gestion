@@ -404,3 +404,30 @@ test('IA: límite por usuario por hora', () => {
   assert.equal(r.code, 'LIMITE');
   assert.equal(b.ctx.__fetchs.length, 30);
 });
+
+test('analíticas: Yuniku (elaboración por encargo) no entra en ventas por cliente/mes/producto pero sí en el margen de su añada', () => {
+  const b = cargarBackend();
+  const fila = (fecha, detalle, sub, prod, anada, ars, usd, bot, concepto) => {
+    const r = new Array(19).fill('');
+    r[1] = fecha; r[2] = detalle; r[3] = sub; r[4] = prod; r[5] = anada; r[6] = ars; r[7] = usd; r[10] = 0; r[12] = bot; r[13] = concepto;
+    return r;
+  };
+  const data = [
+    fila(new b.ctx.Date(2022, 7, 4), 'Venta', 'Yuniku', 'Chardonnay 2022', '2022', 1000, 10, 0, 'Ingreso'),
+    fila(new b.ctx.Date(2023, 4, 17), 'Venta', 'Carlos De Aquin', 'Chardonnay 2022', '2022', 400, 4, 60, 'Ingreso'),
+    fila(new b.ctx.Date(2022, 5, 29), 'Insumos', 'Tapones', 'Chardonnay 2022', '2022', -300, -3, '', 'Egreso'),
+  ];
+  const hoja = { getLastRow: () => data.length + 2, getRange: () => ({ getValues: () => data }) };
+  b.ctx.SpreadsheetApp = { getActiveSpreadsheet: () => ({ getSheetByName: () => hoja }) };
+  const r = JSON.parse(JSON.stringify(b.run('getAnalytics()')));
+  assert.deepEqual(r.ventasCliente.map(c => c.cliente), ['Carlos De Aquin']);
+  assert.equal(r.ventasMes.reduce((s, m) => s + m.ars, 0), 400);
+  assert.equal(r.ventasProducto[0].ars, 400);
+  assert.equal(r.porEncargo.length, 1);
+  assert.equal(r.porEncargo[0].cliente, 'Yuniku');
+  assert.equal(r.porEncargo[0].ars, 1000);
+  const m = r.margenAnada.find(x => x.anada === '2022');
+  assert.equal(m.ventasArs, 1400); // el encargo sí cuenta contra los costos de su añada
+  assert.equal(m.botellasVendidas, 60);
+  assert.equal(r.flujoAnual.reduce((s, a) => s + a.ingresosArs, 0), 1400);
+});
